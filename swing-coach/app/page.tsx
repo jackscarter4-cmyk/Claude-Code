@@ -61,6 +61,7 @@ export default function Home() {
   const landmarkerRef = useRef<PoseLandmarker | null>(null);
   const framesRef = useRef<Frame[]>([]);
   const playbackRafRef = useRef<number | null>(null);
+  const lastDetectTsRef = useRef<number>(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -373,7 +374,9 @@ export default function Home() {
       if (!landmarkerRef.current || !videoRef.current) return;
       const v = videoRef.current;
       const t_ms = metadata.mediaTime * 1000;
-      const result = landmarkerRef.current.detectForVideo(v, t_ms);
+      const detectTs = Math.max(t_ms, lastDetectTsRef.current + 1);
+      lastDetectTsRef.current = detectTs;
+      const result = landmarkerRef.current.detectForVideo(v, detectTs);
       const landmarks = result.landmarks[0];
       if (landmarks) {
         framesRef.current.push({ t_ms, landmarks });
