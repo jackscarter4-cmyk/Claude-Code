@@ -298,6 +298,7 @@ export default function Home() {
       }
       setStatus("done");
       setProgress(1);
+      recomputeMeasurements();
     };
     const onEnded = () => {
       void finish();
@@ -341,7 +342,9 @@ export default function Home() {
       `Reopened cached analysis (${record.frames.length} frames). Re-select the video file to view it.`,
     );
     setStatus("done");
+    setShowDiagnosePayload(false);
     clearCanvas();
+    recomputeMeasurements();
   }
 
   async function removeSwing(key: string) {
@@ -444,6 +447,62 @@ export default function Home() {
                 />
               </div>
             )}
+
+            {measurements && (
+              <PhaseTimeline
+                measurements={measurements}
+                onJump={(t_ms) => {
+                  const v = videoRef.current;
+                  if (!v) return;
+                  v.currentTime = t_ms / 1000;
+                  const frame = findNearestFrame(t_ms);
+                  if (frame) drawSkeleton(frame.landmarks);
+                }}
+              />
+            )}
+          </section>
+        )}
+
+        {measurements && (
+          <section className="mt-8">
+            <MeasurementsPanel measurements={measurements} />
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const payload = {
+                    fileName,
+                    fileSize,
+                    frameCount: framesRef.current.length,
+                    measurements,
+                  };
+                  console.log("Diagnose payload:", payload);
+                  setShowDiagnosePayload((v) => !v);
+                }}
+                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                Diagnose with Claude
+              </button>
+              {showDiagnosePayload && (
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Payload logged to console.
+                </span>
+              )}
+            </div>
+            {showDiagnosePayload && (
+              <pre className="mt-3 max-h-80 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+                {JSON.stringify(
+                  {
+                    fileName,
+                    fileSize,
+                    frameCount: framesRef.current.length,
+                    measurements,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            )}
           </section>
         )}
 
@@ -488,5 +547,118 @@ export default function Home() {
         )}
       </div>
     </main>
+  );
+}
+
+function PhaseTimeline({
+  measurements,
+  onJump,
+}: {
+  measurements: Measurements;
+  onJump: (t_ms: number) => void;
+}) {
+  const phases = measurements.phases;
+  const times = [phases.P1?.t_ms, phases.P4?.t_ms, phases.P7?.t_ms].filter(
+    (t): t is number => typeof t === "number" && Number.isFinite(t),
+  );
+  if (times.length === 0) return null;
+  const minT = Math.min(...times, phases.P1?.t_ms ?? 0);
+  const maxT = Math.max(...times, phases.P7?.t_ms ?? Math.max(...times));
+  const span = Math.max(maxT - minT, 1);
+
+  const markers: { label: string; t_ms: number; color: string }[] = [];
+  if (phases.P1) markers.push({ label: "P1", t_ms: phases.P1.t_ms, color: "bg-sky-500" });
+  if (phases.P4) markers.push({ label: "P4", t_ms: phases.P4.t_ms, color: "bg-amber-500" });
+  if (phases.P7) markers.push({ label: "P7", t_ms: phases.P7.t_ms, color: "bg-rose-500" });
+
+  return (
+    <div className="mt-4">
+      <div className="mb-1 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+        <span>Phases</span>
+        <span className="font-mono">
+          {(minT / 1000).toFixed(2)}s — {(maxT / 1000).toFixed(2)}s
+        </span>
+      </div>
+      <div className="relative h-8 w-full rounded-md bg-zinc-200 dark:bg-zinc-800">
+        {markers.map((m) => {
+          const pct = ((m.t_ms - minT) / span) * 100;
+          return (
+            <button
+              key={m.label}
+              type="button"
+              onClick={() => onJump(m.t_ms)}
+              title={`${m.label} @ ${(m.t_ms / 1000).toFixed(2)}s`}
+              className="absolute top-0 -translate-x-1/2 cursor-pointer select-none"
+              style={{ left: `${pct}%` }}
+            >
+              <div className={`h-8 w-0.5 ${m.color}`} />
+              <span className="mt-0.5 inline-block rounded bg-white px-1 text-[10px] font-medium text-zinc-700 shadow dark:bg-zinc-950 dark:text-zinc-200">
+                {m.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MeasurementsPanel({ measurements }: { measurements: Measurements }) {
+  const { metrics, shoulderWidthPx, handedness } = measurements;
+  const ks = metrics.kinematicSequence;
+  const lh = metrics.leadHipDisplacement;
+
+  const kinematicOrderStr =
+    ks.order.length === 4
+      ? `${ks.order.join(" → ")} ${ks.correct ? "✓" : "✗"}`
+      : "insufficient data";
+
+  const rows: { label: string; value: string }[] = [
+    { label: "Handedness", value: handedness },
+    {
+      label: "Shoulder width (s_w)",
+      value: `${shoulderWidthPx.toFixed(1)} px`,
+    },
+    { label: "Kinematic order", value: kinematicOrderStr },
+    {
+      label: "Spine angle change (P1→P7)",
+      value: `${metrics.spineAngleChangeDeg.toFixed(1)}°`,
+    },
+    {
+      label: "Head sway (P1→P4)",
+      value: `${metrics.headSwayNorm.toFixed(2)} shoulders`,
+    },
+    {
+      label: "Lead hip Δx (P4→P7)",
+      value: `${lh.dx_norm.toFixed(2)} shoulders`,
+    },
+    {
+      label: "Lead hip Δz (P4→P7)",
+      value: `${lh.dz_norm.toFixed(2)} shoulders${lh.earlyExtension ? " (early extension)" : ""}`,
+    },
+  ];
+
+  return (
+    <details
+      open
+      className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      <summary className="cursor-pointer text-sm font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        Measurements
+      </summary>
+      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+        {rows.map((r) => (
+          <div
+            key={r.label}
+            className="flex items-baseline justify-between gap-3 border-b border-zinc-100 pb-1 dark:border-zinc-800"
+          >
+            <dt className="text-zinc-600 dark:text-zinc-400">{r.label}</dt>
+            <dd className="font-mono text-zinc-900 dark:text-zinc-100">
+              {r.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   );
 }
