@@ -15,6 +15,10 @@ import {
   makeKey,
   saveSwing,
 } from "./lib/db";
+import {
+  computeMeasurements,
+  type Measurements,
+} from "./lib/metrics";
 
 type Status =
   | "idle"
@@ -40,6 +44,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [cacheNote, setCacheNote] = useState<string | null>(null);
   const [savedSwings, setSavedSwings] = useState<SwingRecord[]>([]);
+  const [measurements, setMeasurements] = useState<Measurements | null>(null);
+  const [showDiagnosePayload, setShowDiagnosePayload] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -90,6 +96,23 @@ export default function Home() {
     };
   }, [videoUrl]);
 
+  function recomputeMeasurements() {
+    const frames = framesRef.current;
+    if (frames.length === 0) {
+      setMeasurements(null);
+      return;
+    }
+    const v = videoRef.current;
+    const w = v?.videoWidth || 1920;
+    const h = v?.videoHeight || 1080;
+    try {
+      setMeasurements(computeMeasurements(frames, w, h));
+    } catch (err) {
+      console.warn("Measurement computation failed", err);
+      setMeasurements(null);
+    }
+  }
+
   async function refreshSavedSwings() {
     try {
       setSavedSwings(await listSwings());
@@ -110,6 +133,8 @@ export default function Home() {
     setFrameCount(0);
     setProgress(0);
     setCacheNote(null);
+    setMeasurements(null);
+    setShowDiagnosePayload(false);
     clearCanvas();
     if (status !== "loading-model" && status !== "error") setStatus("ready");
 
@@ -124,6 +149,9 @@ export default function Home() {
           ).toLocaleString()}`,
         );
         setStatus("done");
+        // Wait until next tick so the new <video> can begin loading metadata
+        // before measurement computation reads videoWidth/Height.
+        setTimeout(() => recomputeMeasurements(), 0);
       }
     } catch (err) {
       console.warn("Cache lookup failed", err);
