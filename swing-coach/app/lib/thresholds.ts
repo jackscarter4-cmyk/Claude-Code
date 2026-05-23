@@ -37,3 +37,16 @@ export const SWING = {
 // Visibility floor below which a landmark is considered unreliable
 // (the prompt asks us to exclude < 0.5 from peak detection).
 export const MIN_VISIBILITY = 0.5;
+
+// Club + scale constants. Used to extrapolate the (untracked) clubhead from
+// the lead-arm line and to convert pixels to real-world units.
+export const CLUB = {
+  // Callaway Great Big Bertha driver: stock playing length ~45.75 in.
+  shaftLengthM: 1.162,
+  // ~460cc driver head mass ~0.20 kg (for the shaft-load proxy only).
+  headMassKg: 0.2,
+  // Average adult biacromial (shoulder) width — the real-world scale we map
+  // the measured shoulder-width-in-pixels onto.
+  biacromialWidthM: 0.4,
+} as const;
+

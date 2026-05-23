@@ -17,6 +17,7 @@ import {
 } from "./lib/db";
 import {
   computeMeasurements,
+  extrapolateClubhead,
   type Measurements,
 } from "./lib/metrics";
 
@@ -50,6 +51,7 @@ export default function Home() {
   const [fileSize, setFileSize] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [progress, setProgress] = useState(0);
+  const [playheadMs, setPlayheadMs] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [cacheNote, setCacheNote] = useState<string | null>(null);
@@ -226,6 +228,32 @@ export default function Home() {
       ctx.arc(lm.x * W, lm.y * H, r, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    // Extrapolated club (shaft + head), once we know the body scale.
+    if (measurements && measurements.shoulderWidthPx > 0) {
+      const leadSide = measurements.handedness === "right" ? "left" : "right";
+      const wristIdx = leadSide === "left" ? 15 : 16;
+      const wrist = landmarks[wristIdx];
+      const head = extrapolateClubhead(
+        landmarks,
+        leadSide,
+        measurements.shoulderWidthPx,
+        W,
+        H,
+      );
+      if (wrist && head && (wrist.visibility ?? 0) > 0.3) {
+        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = Math.max(2, W / 350);
+        ctx.beginPath();
+        ctx.moveTo(wrist.x * W, wrist.y * H);
+        ctx.lineTo(head.x * W, head.y * H);
+        ctx.stroke();
+        ctx.fillStyle = "#0ea5e9";
+        ctx.beginPath();
+        ctx.arc(head.x * W, head.y * H, r * 1.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
 
   function findNearestFrame(t_ms: number): Frame | null {
@@ -254,8 +282,10 @@ export default function Home() {
     const loop = () => {
       const v = videoRef.current;
       if (!v) return;
-      const frame = findNearestFrame(v.currentTime * 1000);
+      const t = v.currentTime * 1000;
+      const frame = findNearestFrame(t);
       if (frame) drawSkeleton(frame.landmarks);
+      setPlayheadMs(t);
       playbackRafRef.current = requestAnimationFrame(loop);
     };
     playbackRafRef.current = requestAnimationFrame(loop);
@@ -594,8 +624,10 @@ export default function Home() {
                 onSeeked={() => {
                   const v = videoRef.current;
                   if (!v) return;
-                  const frame = findNearestFrame(v.currentTime * 1000);
+                  const t = v.currentTime * 1000;
+                  const frame = findNearestFrame(t);
                   if (frame) drawSkeleton(frame.landmarks);
+                  setPlayheadMs(t);
                 }}
                 className="block w-full"
               />
@@ -631,6 +663,11 @@ export default function Home() {
 
         {measurements && (
           <section className="mt-8">
+            <ForceTransferHeatmap
+              measurements={measurements}
+              currentTimeMs={playheadMs}
+            />
+            <div className="mt-6" />
             <MeasurementsPanel measurements={measurements} />
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
@@ -816,6 +853,26 @@ function MeasurementsPanel({ measurements }: { measurements: Measurements }) {
       label: "Lead hip Δz (P4→P7)",
       value: `${lh.dz_norm.toFixed(2)} shoulders${lh.earlyExtension ? " (early extension)" : ""}`,
     },
+    {
+      label: "Pelvis rotation @ P4",
+      value: `${metrics.rotation.pelvisRotationDegP4.toFixed(0)}°`,
+    },
+    {
+      label: "Shoulder rotation @ P4",
+      value: `${metrics.rotation.shoulderRotationDegP4.toFixed(0)}°`,
+    },
+    {
+      label: "X-factor proxy @ P4",
+      value: `${metrics.rotation.xFactorProxyDeg.toFixed(0)}°`,
+    },
+    {
+      label: "Clubhead speed (proxy)",
+      value: `${metrics.club.peakSpeedMph.toFixed(0)} mph (±15-20%)`,
+    },
+    {
+      label: "Shaft-load proxy",
+      value: `${metrics.club.shaftLoadProxy.toFixed(1)} N·(proxy)`,
+    },
   ];
 
   return (
@@ -840,5 +897,75 @@ function MeasurementsPanel({ measurements }: { measurements: Measurements }) {
         ))}
       </dl>
     </details>
+  );
+}
+
+function heatColor(v: number): string {
+  // 0 -> cool blue, 1 -> hot red. v in [0,1].
+  const t = Math.min(1, Math.max(0, v));
+  const hue = 220 - 220 * t; // 220 (blue) -> 0 (red)
+  const light = 30 + 35 * t;
+  return `hsl(${hue}, 85%, ${light}%)`;
+}
+
+function ForceTransferHeatmap({
+  measurements,
+  currentTimeMs,
+}: {
+  measurements: Measurements;
+  currentTimeMs: number;
+}) {
+  const series = measurements.sequenceSeries;
+  if (!series || series.t_ms.length === 0) return null;
+
+  // Nearest sample to the current playhead.
+  let idx = 0;
+  let best = Infinity;
+  for (let i = 0; i < series.t_ms.length; i++) {
+    const d = Math.abs(series.t_ms[i] - currentTimeMs);
+    if (d < best) {
+      best = d;
+      idx = i;
+    }
+  }
+
+  const links: { name: string; v: number }[] = [
+    { name: "Pelvis", v: series.pelvis[idx] ?? 0 },
+    { name: "Thorax", v: series.thorax[idx] ?? 0 },
+    { name: "Arm", v: series.arm[idx] ?? 0 },
+    { name: "Club", v: series.club[idx] ?? 0 },
+  ];
+
+  return (
+    <div className="mt-6 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Power transfer (speed through the chain)
+        </h3>
+        <span className="text-xs text-zinc-400">play the video to animate</span>
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        {links.map((l) => (
+          <div key={l.name} className="text-center">
+            <div
+              className="mx-auto h-16 w-full rounded-md transition-colors duration-75"
+              style={{ backgroundColor: heatColor(l.v) }}
+            />
+            <div className="mt-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              {l.name}
+            </div>
+            <div className="font-mono text-[10px] text-zinc-400">
+              {Math.round(l.v * 100)}%
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-[11px] leading-snug text-zinc-400">
+        Each block shows that segment&apos;s speed (0-100% of its own max) at the
+        current frame. An efficient swing lights up left-to-right: pelvis →
+        thorax → arm → club. This visualizes sequence/speed transfer, not
+        measured force.
+      </p>
+    </div>
   );
 }

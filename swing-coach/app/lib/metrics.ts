@@ -1,6 +1,6 @@
 import savitzkyGolay from "ml-savitzky-golay";
 import type { Frame } from "./db";
-import { SWING } from "./thresholds";
+import { CLUB, SWING } from "./thresholds";
 
 // MediaPipe BlazePose landmark indices we use.
 const LM = {
@@ -38,22 +38,52 @@ export type LeadHipDisplacement = {
   earlyExtension: boolean;
 };
 
+export type ClubMetrics = {
+  // 2D-extrapolated clubhead speed; honest proxy, ~15-20% error.
+  peakSpeedMph: number;
+  peakSpeedMs: number;
+  // clubhead acceleration * head mass at its peak. A lag/load INDICATOR,
+  // not a shaft-flex/stiffness measurement (video can't recover flex).
+  shaftLoadProxy: number;
+};
+
+export type RotationMetrics = {
+  // Foreshortening-based axial rotation at the top of the backswing (P4).
+  pelvisRotationDegP4: number;
+  shoulderRotationDegP4: number;
+  xFactorProxyDeg: number; // shoulder - pelvis at P4 (label as proxy)
+};
+
+// Per-frame normalized (0..1) segment speeds for the transfer heatmap.
+export type SequenceSeries = {
+  t_ms: number[];
+  pelvis: number[];
+  thorax: number[];
+  arm: number[];
+  club: number[];
+};
+
 export type Measurements = {
   phases: Phases;
   shoulderWidthPx: number;
+  pixelsPerMeter: number;
   handedness: "right" | "left";
   metrics: {
     kinematicSequence: KinematicSequence;
     leadHipDisplacement: LeadHipDisplacement;
     spineAngleChangeDeg: number;
     headSwayNorm: number;
+    rotation: RotationMetrics;
+    club: ClubMetrics;
   };
+  sequenceSeries: SequenceSeries | null;
 };
 
 function emptyMeasurements(shoulderWidthPx = 0): Measurements {
   return {
     phases: { P1: null, P4: null, P7: null },
     shoulderWidthPx,
+    pixelsPerMeter: 0,
     handedness: "right",
     metrics: {
       kinematicSequence: {
@@ -67,7 +97,14 @@ function emptyMeasurements(shoulderWidthPx = 0): Measurements {
       leadHipDisplacement: { dx_norm: 0, dz_norm: 0, earlyExtension: false },
       spineAngleChangeDeg: 0,
       headSwayNorm: 0,
+      rotation: {
+        pelvisRotationDegP4: 0,
+        shoulderRotationDegP4: 0,
+        xFactorProxyDeg: 0,
+      },
+      club: { peakSpeedMph: 0, peakSpeedMs: 0, shaftLoadProxy: 0 },
     },
+    sequenceSeries: null,
   };
 }
 
@@ -379,6 +416,86 @@ function midpoint(
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 };
 }
 
+/** Pixel distance between two landmarks (uses W for both axes for a stable scale). */
+function segWidthPx(frame: Frame, idxA: number, idxB: number, W: number): number {
+  const a = frame.landmarks[idxA];
+  const b = frame.landmarks[idxB];
+  if (!a || !b) return NaN;
+  if ((a.visibility ?? 0) < 0.4 || (b.visibility ?? 0) < 0.4) return NaN;
+  return Math.hypot((a.x - b.x) * W, (a.y - b.y) * W);
+}
+
+/**
+ * Axial rotation (degrees) of a body line about the vertical, recovered from
+ * foreshortening. A line of fixed true length projects to width
+ * w(t) = w_facingCamera * cos(rotation), so rotation = arccos(w(t)/w_max).
+ * Returns per-frame degrees and matching timestamps over [startFrame,endFrame].
+ */
+function rotationDegSeries(
+  frames: Frame[],
+  startFrame: number,
+  endFrame: number,
+  idxA: number,
+  idxB: number,
+  W: number,
+): { times: number[]; deg: number[] } {
+  const widths: number[] = [];
+  for (let i = 0; i < frames.length; i++) {
+    widths.push(segWidthPx(frames[i], idxA, idxB, W));
+  }
+  const valid = widths.filter((w) => Number.isFinite(w));
+  const wMax = valid.length ? Math.max(...valid) : 1;
+  // Fill gaps with nearest valid so the series is continuous.
+  let last = wMax;
+  for (let i = 0; i < widths.length; i++) {
+    if (!Number.isFinite(widths[i])) widths[i] = last;
+    else last = widths[i];
+  }
+  const degAll = widths.map((w) => {
+    const ratio = wMax > 0 ? Math.min(1, Math.max(0, w / wMax)) : 1;
+    return (Math.acos(ratio) * 180) / Math.PI;
+  });
+  const degSmooth = smooth(degAll);
+  const times: number[] = [];
+  const deg: number[] = [];
+  for (let i = startFrame; i <= endFrame && i < frames.length; i++) {
+    times.push(frames[i].t_ms);
+    deg.push(degSmooth[i]);
+  }
+  return { times, deg };
+}
+
+/**
+ * Extrapolate the (untracked) clubhead from the lead-arm line: the shaft runs
+ * roughly along elbow->wrist, extended by the club's real length scaled to
+ * pixels. Returns normalized image coords for drawing, or null.
+ */
+export function extrapolateClubhead(
+  landmarks: { x: number; y: number; visibility?: number }[],
+  leadSide: "left" | "right",
+  shoulderWidthPx: number,
+  W: number,
+  H: number,
+): { x: number; y: number } | null {
+  const elbowIdx = leadSide === "left" ? LM.L_ELBOW : LM.R_ELBOW;
+  const wristIdx = leadSide === "left" ? LM.L_WRIST : LM.R_WRIST;
+  const elbow = landmarks[elbowIdx];
+  const wrist = landmarks[wristIdx];
+  if (!elbow || !wrist || shoulderWidthPx <= 0) return null;
+  const pxPerM = shoulderWidthPx / CLUB.biacromialWidthM;
+  const clubLenPx = CLUB.shaftLengthM * pxPerM;
+  let dx = (wrist.x - elbow.x) * W;
+  let dy = (wrist.y - elbow.y) * H;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return null;
+  dx /= len;
+  dy /= len;
+  return {
+    x: wrist.x + (dx * clubLenPx) / W,
+    y: wrist.y + (dy * clubLenPx) / H,
+  };
+}
+
 function headCenter(
   frame: Frame,
 ): { x: number; y: number; z: number } | null {
@@ -456,53 +573,92 @@ export function computeMeasurements(
   const P4 = phases.P4;
   const P7 = phases.P7;
 
+  const pixelsPerMeter = shoulderWidthPx / CLUB.biacromialWidthM;
+
   // If we couldn't determine P4 or P7 reliably, return what we have.
   if (!P4 || !P7 || P7.frame <= P4.frame) {
     return {
       phases: { P1, P4, P7 },
       shoulderWidthPx,
+      pixelsPerMeter,
       handedness,
       metrics: emptyMeasurements(shoulderWidthPx).metrics,
+      sequenceSeries: null,
     };
   }
 
-  // 1. Kinematic sequence over P4..P7 downswing.
+  const n = frames.length;
   const leadShoulder = leadSide === "left" ? LM.L_SHOULDER : LM.R_SHOULDER;
   const leadWrist = leadSide === "left" ? LM.L_WRIST : LM.R_WRIST;
+  const times = frames.map((f) => f.t_ms);
 
-  const pelvis = angularVelocityFromLine(
+  // --- Full-range segment speeds (used for both peaks and the heatmap) ---
+
+  // Pelvis & thorax axial rotation via foreshortening -> angular velocity.
+  const pelvisRot = rotationDegSeries(frames, 0, n - 1, LM.L_HIP, LM.R_HIP, W);
+  const thoraxRot = rotationDegSeries(
     frames,
-    P4.frame,
-    P7.frame,
-    W,
-    H,
-    LM.L_HIP,
-    LM.R_HIP,
-  );
-  const thorax = angularVelocityFromLine(
-    frames,
-    P4.frame,
-    P7.frame,
-    W,
-    H,
+    0,
+    n - 1,
     LM.L_SHOULDER,
     LM.R_SHOULDER,
+    W,
   );
-  const arm = angularVelocityFromLine(
+  const pelvisVel = derivative(pelvisRot.deg, times).map((v) => Math.abs(v));
+  const thoraxVel = derivative(thoraxRot.deg, times).map((v) => Math.abs(v));
+
+  // Lead arm swings largely in the image plane, so in-plane angular velocity
+  // is valid here.
+  const armFull = angularVelocityFromLine(
     frames,
-    P4.frame,
-    P7.frame,
+    0,
+    n - 1,
     W,
     H,
     leadShoulder,
     leadWrist,
   );
-  const club = wristSpeed(frames, P4.frame, P7.frame, W, H, leadWrist);
 
-  const pelvisPeakMs = peakTime(pelvis.times, pelvis.angVel);
-  const thoraxPeakMs = peakTime(thorax.times, thorax.angVel);
-  const armPeakMs = peakTime(arm.times, arm.angVel);
-  const clubPeakMs = peakTime(club.times, club.speed);
+  // Extrapolated clubhead position -> speed (m/s) and acceleration (m/s^2).
+  const chx: number[] = [];
+  const chy: number[] = [];
+  let lastX = 0;
+  let lastY = 0;
+  for (let i = 0; i < n; i++) {
+    const ch = extrapolateClubhead(
+      frames[i].landmarks,
+      leadSide,
+      shoulderWidthPx,
+      W,
+      H,
+    );
+    if (ch) {
+      lastX = ch.x * W;
+      lastY = ch.y * H;
+    }
+    chx.push(lastX);
+    chy.push(lastY);
+  }
+  const chxS = smooth(chx);
+  const chyS = smooth(chy);
+  const cvx = derivative(chxS, times);
+  const cvy = derivative(chyS, times);
+  // (px/ms) * (1000 ms/s) / (px/m) = m/s
+  const clubSpeedMs = cvx.map(
+    (v, i) => (Math.hypot(v, cvy[i]) * 1000) / (pixelsPerMeter || 1),
+  );
+  const clubAccel = derivative(clubSpeedMs, times).map((v) => Math.abs(v) * 1000);
+
+  // --- Peaks over the downswing window P4 -> P7 ---
+  const dStart = P4.frame;
+  const dEnd = P7.frame;
+  const dt = times.slice(dStart, dEnd + 1);
+  const sl = (a: number[]) => a.slice(dStart, dEnd + 1);
+
+  const pelvisPeakMs = peakTime(dt, sl(pelvisVel));
+  const thoraxPeakMs = peakTime(dt, sl(thoraxVel));
+  const armPeakMs = peakTime(dt, sl(armFull.angVel));
+  const clubPeakMs = peakTime(dt, sl(clubSpeedMs).map((v) => Math.abs(v)));
 
   const segs: { name: "pelvis" | "thorax" | "arm" | "club"; t: number | null }[] = [
     { name: "pelvis", t: pelvisPeakMs },
@@ -524,6 +680,30 @@ export function computeMeasurements(
     order[1] === "thorax" &&
     order[2] === "arm" &&
     order[3] === "club";
+
+  // Club speed + shaft-load proxy over the downswing.
+  const clubSpeeds = sl(clubSpeedMs).map((v) => Math.abs(v));
+  const peakSpeedMs = clubSpeeds.length ? Math.max(...clubSpeeds) : 0;
+  const accelDown = sl(clubAccel);
+  const peakAccel = accelDown.length ? Math.max(...accelDown) : 0;
+
+  // Foreshortening rotation at the top of the backswing (P4).
+  const pelvisRotationDegP4 = safeNum(pelvisRot.deg[P4.frame] ?? 0);
+  const shoulderRotationDegP4 = safeNum(thoraxRot.deg[P4.frame] ?? 0);
+
+  // Normalized per-frame speeds for the transfer heatmap.
+  const normSeries = (a: number[]) => {
+    let m = 0;
+    for (const v of a) if (Number.isFinite(v) && v > m) m = v;
+    return a.map((v) => (m > 0 ? safeNum(v / m) : 0));
+  };
+  const sequenceSeries: SequenceSeries = {
+    t_ms: times,
+    pelvis: normSeries(pelvisVel),
+    thorax: normSeries(thoraxVel),
+    arm: normSeries(armFull.angVel),
+    club: normSeries(clubSpeedMs.map((v) => Math.abs(v))),
+  };
 
   // 2. Lead hip displacement P4 -> P7
   const leadHipIdx = leadSide === "left" ? LM.L_HIP : LM.R_HIP;
@@ -564,10 +744,12 @@ export function computeMeasurements(
   // Suppress unused-variable warnings for helpers exposed only for completeness.
   void stddev;
   void lmVis;
+  void wristSpeed;
 
   return {
     phases: { P1, P4, P7 },
     shoulderWidthPx,
+    pixelsPerMeter,
     handedness,
     metrics: {
       kinematicSequence: {
@@ -581,6 +763,17 @@ export function computeMeasurements(
       leadHipDisplacement: { dx_norm, dz_norm, earlyExtension },
       spineAngleChangeDeg,
       headSwayNorm,
+      rotation: {
+        pelvisRotationDegP4,
+        shoulderRotationDegP4,
+        xFactorProxyDeg: safeNum(shoulderRotationDegP4 - pelvisRotationDegP4),
+      },
+      club: {
+        peakSpeedMs: safeNum(peakSpeedMs),
+        peakSpeedMph: safeNum(peakSpeedMs * 2.23694),
+        shaftLoadProxy: safeNum(peakAccel * CLUB.headMassKg),
+      },
     },
+    sequenceSeries,
   };
 }
