@@ -284,8 +284,78 @@ export default function Home() {
     };
   }
 
+  function sanityCheck(payload: ReturnType<typeof buildDiagnosePayload>) {
+    const errors: string[] = [];
+    const m = payload.measurements;
+    if (!m) {
+      errors.push("No measurements computed.");
+      return errors;
+    }
+    const p = m.phases;
+
+    if (!p.P1 || !p.P4 || !p.P7) {
+      const missing = (["P1", "P4", "P7"] as const).filter((k) => !p[k]);
+      errors.push(`Phase detection missing ${missing.join(", ")}.`);
+      return errors;
+    }
+
+    if (payload.frameCount < 30)
+      errors.push(
+        `Only ${payload.frameCount} frames captured — need at least 30 to cover P1–P8.`,
+      );
+
+    if (p.P4.frame <= p.P1.frame)
+      errors.push(
+        `P4 (frame ${p.P4.frame}) is not after P1 (frame ${p.P1.frame}) — phase detection failed.`,
+      );
+    if (p.P7.frame <= p.P4.frame)
+      errors.push(
+        `P7 (frame ${p.P7.frame}) is not after P4 (frame ${p.P4.frame}) — phase detection failed.`,
+      );
+
+    if (p.P7.frame - p.P4.frame < 5)
+      errors.push(
+        `P4 and P7 are ${p.P7.frame - p.P4.frame} frames apart — phase detection failed.`,
+      );
+
+    if (p.P1.frame < 10)
+      errors.push(
+        `P1 at frame ${p.P1.frame} — too close to video start, likely false.`,
+      );
+    if (p.P7.frame > payload.frameCount - 10)
+      errors.push(
+        `P7 at frame ${p.P7.frame} of ${payload.frameCount} — too close to video end, likely false.`,
+      );
+
+    const ks = m.metrics.kinematicSequence;
+    const peakTimes = new Set([
+      ks.pelvisPeakMs,
+      ks.thoraxPeakMs,
+      ks.armPeakMs,
+      ks.clubPeakMs,
+    ]);
+    if (peakTimes.size < 4)
+      errors.push(
+        `Kinematic peaks not distinct: ${peakTimes.size} unique times.`,
+      );
+
+    return errors;
+  }
+
   async function runDiagnosis() {
     if (!measurements) return;
+    const payload = buildDiagnosePayload();
+    const errors = sanityCheck(payload);
+    if (errors.length > 0) {
+      setDiagnosis(null);
+      setDiagnosisUsage(null);
+      setDiagnosisError(
+        `Pose data failed sanity checks — not sending to Claude:\n• ${errors.join(
+          "\n• ",
+        )}`,
+      );
+      return;
+    }
     setDiagnosisLoading(true);
     setDiagnosisError(null);
     setDiagnosis(null);
@@ -294,7 +364,7 @@ export default function Home() {
       const res = await fetch("/api/diagnose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildDiagnosePayload()),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -548,7 +618,7 @@ export default function Home() {
             </div>
 
             {diagnosisError && (
-              <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+              <div className="mt-3 whitespace-pre-wrap rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
                 {diagnosisError}
               </div>
             )}
