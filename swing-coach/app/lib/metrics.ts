@@ -313,9 +313,13 @@ function detectPhases(
     if (smoothed[i] < smoothed[topIdx]) topIdx = i;
   }
 
-  // Impact: lowest hands (max y) between the top and swing end.
+  // Impact: lowest hands (max y) within a downswing-length window after the
+  // top. A real downswing is ~0.25-0.4s, so bounding the search to ~0.5s
+  // keeps P7 from drifting late into the follow-through.
+  const downswingMax = Math.max(3, Math.round(fps * 0.5));
+  const impactEnd = Math.min(n - 1, swingEnd, topIdx + downswingMax);
   let impactIdx = topIdx;
-  for (let i = topIdx; i <= swingEnd && i < n; i++) {
+  for (let i = topIdx; i <= impactEnd; i++) {
     if (smoothed[i] > smoothed[impactIdx]) impactIdx = i;
   }
 
