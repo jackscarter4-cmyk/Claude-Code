@@ -46,6 +46,15 @@ export default function Home() {
   const [savedSwings, setSavedSwings] = useState<SwingRecord[]>([]);
   const [measurements, setMeasurements] = useState<Measurements | null>(null);
   const [showDiagnosePayload, setShowDiagnosePayload] = useState(false);
+  const [diagnosis, setDiagnosis] = useState<string | null>(null);
+  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
+  const [diagnosisError, setDiagnosisError] = useState<string | null>(null);
+  const [diagnosisUsage, setDiagnosisUsage] = useState<{
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -134,6 +143,9 @@ export default function Home() {
     setProgress(0);
     setCacheNote(null);
     setMeasurements(null);
+    setDiagnosis(null);
+    setDiagnosisError(null);
+    setDiagnosisUsage(null);
     setShowDiagnosePayload(false);
     clearCanvas();
     if (status !== "loading-model" && status !== "error") setStatus("ready");
@@ -248,6 +260,54 @@ export default function Home() {
   useEffect(() => {
     return () => stopPlaybackOverlay();
   }, []);
+
+  function buildDiagnosePayload() {
+    const frames = framesRef.current;
+    const fps =
+      frames.length > 1
+        ? Math.round(
+            (1000 * (frames.length - 1)) /
+              (frames[frames.length - 1].t_ms - frames[0].t_ms),
+          )
+        : 0;
+    return {
+      camera_angle: "face_on",
+      handedness: measurements?.handedness ?? "right",
+      club: "iron",
+      golfer_level: "intermediate",
+      fps,
+      fileName,
+      fileSize,
+      frameCount: frames.length,
+      measurements,
+    };
+  }
+
+  async function runDiagnosis() {
+    if (!measurements) return;
+    setDiagnosisLoading(true);
+    setDiagnosisError(null);
+    setDiagnosis(null);
+    setDiagnosisUsage(null);
+    try {
+      const res = await fetch("/api/diagnose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildDiagnosePayload()),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDiagnosisError(data.error ?? `Request failed (${res.status})`);
+      } else {
+        setDiagnosis(data.text ?? "(no text returned)");
+        setDiagnosisUsage(data.usage ?? null);
+      }
+    } catch (err) {
+      setDiagnosisError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDiagnosisLoading(false);
+    }
+  }
 
   async function runAnalysis() {
     const video = videoRef.current;
@@ -469,38 +529,52 @@ export default function Home() {
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  const payload = {
-                    fileName,
-                    fileSize,
-                    frameCount: framesRef.current.length,
-                    measurements,
-                  };
-                  console.log("Diagnose payload:", payload);
-                  setShowDiagnosePayload((v) => !v);
-                }}
-                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                disabled={diagnosisLoading}
+                onClick={runDiagnosis}
+                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Diagnose with Claude
+                {diagnosisLoading ? "Asking Claude…" : "Diagnose with Claude"}
               </button>
-              {showDiagnosePayload && (
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                  Payload logged to console.
-                </span>
-              )}
+              <button
+                type="button"
+                onClick={() => setShowDiagnosePayload((v) => !v)}
+                className="rounded-md border border-zinc-300 px-3 py-2 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                {showDiagnosePayload ? "Hide" : "Show"} raw payload
+              </button>
             </div>
+
+            {diagnosisError && (
+              <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+                {diagnosisError}
+              </div>
+            )}
+
+            {diagnosis && (
+              <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    Claude diagnosis
+                  </h3>
+                  {diagnosisUsage && (
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      {diagnosisUsage.input_tokens ?? 0} in ·{" "}
+                      {diagnosisUsage.output_tokens ?? 0} out
+                      {diagnosisUsage.cache_read_input_tokens != null &&
+                        diagnosisUsage.cache_read_input_tokens > 0 &&
+                        ` · ${diagnosisUsage.cache_read_input_tokens} cached`}
+                    </span>
+                  )}
+                </div>
+                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-900 dark:text-zinc-100">
+                  {diagnosis}
+                </pre>
+              </div>
+            )}
+
             {showDiagnosePayload && (
               <pre className="mt-3 max-h-80 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-                {JSON.stringify(
-                  {
-                    fileName,
-                    fileSize,
-                    frameCount: framesRef.current.length,
-                    measurements,
-                  },
-                  null,
-                  2,
-                )}
+                {JSON.stringify(buildDiagnosePayload(), null, 2)}
               </pre>
             )}
           </section>
