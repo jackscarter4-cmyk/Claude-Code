@@ -246,7 +246,11 @@ export default function Home() {
       return;
     }
 
+    let finished = false;
     const finish = async () => {
+      if (finished) return;
+      finished = true;
+      video.removeEventListener("ended", onEnded);
       setStatus("saving");
       try {
         const durationMs = (videoRef.current?.duration ?? 0) * 1000;
@@ -267,11 +271,16 @@ export default function Home() {
       setStatus("done");
       setProgress(1);
     };
+    const onEnded = () => {
+      void finish();
+    };
+    video.addEventListener("ended", onEnded);
 
     const tick = (
       _now: DOMHighResTimeStamp,
       metadata: VideoFrameCallbackMetadata,
     ) => {
+      if (finished) return;
       if (!landmarkerRef.current || !videoRef.current) return;
       const v = videoRef.current;
       const t_ms = metadata.mediaTime * 1000;
