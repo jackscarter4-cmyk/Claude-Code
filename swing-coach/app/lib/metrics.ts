@@ -1,5 +1,6 @@
 import savitzkyGolay from "ml-savitzky-golay";
 import type { Frame } from "./db";
+import { SWING } from "./thresholds";
 
 // MediaPipe BlazePose landmark indices we use.
 const LM = {
@@ -194,8 +195,9 @@ function detectP1(
   // Approximate frame rate from time deltas.
   const totalMs = frames[frames.length - 1].t_ms - frames[0].t_ms;
   const fps = totalMs > 0 ? ((frames.length - 1) * 1000) / totalMs : 30;
-  const windowLen = Math.max(3, Math.round(fps * 0.4));
-  const threshold = 0.02 * shoulderWidthPx; // px / frame, low motion threshold
+  const windowLen = Math.max(3, Math.round(fps * SWING.addressStillWindowS));
+  // Low-motion threshold: a real address is nearly still.
+  const threshold = SWING.addressMotionThreshSw * shoulderWidthPx;
 
   let bestStart = -1;
   let bestEnd = -1;
@@ -256,7 +258,15 @@ function detectP4(
   return { frame, t_ms: frames[frame].t_ms };
 }
 
-/** P7: peak |dx/dt| of smoothed lead wrist x, after P4. */
+/**
+ * P7 (impact): lowest point of the lead-hand arc after the top.
+ *
+ * In a face-on view the hands descend from P4, reach their lowest point at
+ * impact (largest y, since y increases downward), then rise again into the
+ * follow-through. The old rule used peak horizontal wrist speed, which peaks
+ * in the follow-through and pushed P7 too late. The bottom of the arc is a
+ * robust 2D impact proxy for the hands.
+ */
 function detectP7(
   frames: Frame[],
   startFrame: number,
@@ -264,22 +274,19 @@ function detectP7(
 ): { frame: number; t_ms: number } | null {
   if (startFrame >= frames.length - 1) return null;
   const wristIdx = leadSide === "left" ? LM.L_WRIST : LM.R_WRIST;
-  const xs: number[] = [];
-  const ts: number[] = [];
+  const ys: number[] = [];
   for (let i = startFrame; i < frames.length; i++) {
     const lm = frames[i].landmarks[wristIdx];
-    xs.push(lm ? lm.x : 0);
-    ts.push(frames[i].t_ms);
+    ys.push(lm ? lm.y : i > 0 ? ys[i - 1] : 0);
   }
-  if (xs.length < 3) return null;
-  const xsSmooth = smooth(xs);
-  const vx = derivative(xsSmooth, ts);
+  if (ys.length < 3) return null;
+  const ysSmooth = smooth(ys);
+  // Largest y after the top = lowest hands = impact.
   let maxIdx = 0;
   let maxVal = -Infinity;
-  for (let i = 0; i < vx.length; i++) {
-    const m = Math.abs(vx[i]);
-    if (m > maxVal) {
-      maxVal = m;
+  for (let i = 0; i < ysSmooth.length; i++) {
+    if (ysSmooth[i] > maxVal) {
+      maxVal = ysSmooth[i];
       maxIdx = i;
     }
   }
@@ -533,8 +540,10 @@ export function computeMeasurements(
   if (lhP4 && lhP7 && shoulderWidthPx > 0) {
     dx_norm = safeNum(((lhP7.x - lhP4.x) * W) / shoulderWidthPx);
     dz_norm = safeNum(((lhP7.z - lhP4.z) * W) / shoulderWidthPx);
-    // In MediaPipe, smaller z = closer to camera. Hips moving toward camera = z decreasing.
-    earlyExtension = dz_norm < -0.15;
+    // In MediaPipe, smaller z = closer to camera. Hips moving toward the ball
+    // (camera) = z decreasing. NOTE: single-camera z is unreliable; this is a
+    // low-confidence proxy and is far better measured from down-the-line.
+    earlyExtension = dz_norm < -SWING.earlyExtensionHipTowardBallSw;
   }
 
   // 3. Spine angle change P1 -> P7
