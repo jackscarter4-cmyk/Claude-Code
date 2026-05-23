@@ -7,6 +7,7 @@ import {
   type NormalizedLandmark,
 } from "@mediapipe/tasks-vision";
 import {
+  type CameraAngle,
   type Frame,
   type SwingRecord,
   deleteSwing,
@@ -55,6 +56,8 @@ export default function Home() {
     "auto" | "portrait" | "landscape"
   >("auto");
   const [videoAspect, setVideoAspect] = useState<number | null>(null);
+  const [cameraAngle, setCameraAngle] = useState<CameraAngle>("face_on");
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [cacheNote, setCacheNote] = useState<string | null>(null);
   const [savedSwings, setSavedSwings] = useState<SwingRecord[]>([]);
@@ -120,21 +123,22 @@ export default function Home() {
     };
   }, [videoUrl]);
 
-  function recomputeMeasurements() {
+  function computeNow(): Measurements | null {
     const frames = framesRef.current;
-    if (frames.length === 0) {
-      setMeasurements(null);
-      return;
-    }
+    if (frames.length === 0) return null;
     const v = videoRef.current;
     const w = v?.videoWidth || 1920;
     const h = v?.videoHeight || 1080;
     try {
-      setMeasurements(computeMeasurements(frames, w, h));
+      return computeMeasurements(frames, w, h);
     } catch (err) {
       console.warn("Measurement computation failed", err);
-      setMeasurements(null);
+      return null;
     }
+  }
+
+  function recomputeMeasurements() {
+    setMeasurements(computeNow());
   }
 
   async function refreshSavedSwings() {
@@ -170,15 +174,17 @@ export default function Home() {
       if (cached) {
         framesRef.current = cached.frames;
         setFrameCount(cached.frames.length);
+        if (cached.cameraAngle) setCameraAngle(cached.cameraAngle);
         setCacheNote(
           `Loaded ${cached.frames.length} cached frames from ${new Date(
             cached.savedAt,
           ).toLocaleString()}`,
         );
         setStatus("done");
+        if (cached.measurements) setMeasurements(cached.measurements);
         // Wait until next tick so the new <video> can begin loading metadata
         // before measurement computation reads videoWidth/Height.
-        setTimeout(() => recomputeMeasurements(), 0);
+        else setTimeout(() => recomputeMeasurements(), 0);
       }
     } catch (err) {
       console.warn("Cache lookup failed", err);
@@ -279,21 +285,23 @@ export default function Home() {
     return () => stopPlaybackOverlay();
   }, []);
 
+  function fpsOf(frames: Frame[]): number {
+    return frames.length > 1
+      ? Math.round(
+          (1000 * (frames.length - 1)) /
+            (frames[frames.length - 1].t_ms - frames[0].t_ms),
+        )
+      : 0;
+  }
+
   function buildDiagnosePayload() {
     const frames = framesRef.current;
-    const fps =
-      frames.length > 1
-        ? Math.round(
-            (1000 * (frames.length - 1)) /
-              (frames[frames.length - 1].t_ms - frames[0].t_ms),
-          )
-        : 0;
     return {
-      camera_angle: "face_on",
+      camera_angle: cameraAngle,
       handedness: measurements?.handedness ?? "right",
       club: "iron",
       golfer_level: "intermediate",
-      fps,
+      fps: fpsOf(frames),
       fileName,
       fileSize,
       frameCount: frames.length,
@@ -301,7 +309,24 @@ export default function Home() {
     };
   }
 
-  function sanityCheck(payload: ReturnType<typeof buildDiagnosePayload>) {
+  function payloadFromRecord(record: SwingRecord) {
+    return {
+      camera_angle: record.cameraAngle ?? "face_on",
+      handedness: record.measurements?.handedness ?? "right",
+      club: "iron",
+      golfer_level: "intermediate",
+      fps: fpsOf(record.frames),
+      fileName: record.fileName,
+      fileSize: record.fileSize,
+      frameCount: record.frames.length,
+      measurements: record.measurements ?? null,
+    };
+  }
+
+  function sanityCheck(payload: {
+    measurements: Measurements | null;
+    frameCount: number;
+  }) {
     const errors: string[] = [];
     const m = payload.measurements;
     if (!m) {
@@ -397,6 +422,86 @@ export default function Home() {
     }
   }
 
+  function toggleSelected(key: string) {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function runCombinedDiagnosis() {
+    const selected = savedSwings.filter((s) => selectedKeys.has(s.key));
+    if (selected.length === 0) return;
+
+    const usable: ReturnType<typeof payloadFromRecord>[] = [];
+    const dropped: string[] = [];
+    for (const rec of selected) {
+      const p = payloadFromRecord(rec);
+      const errs = sanityCheck(p);
+      if (errs.length === 0) usable.push(p);
+      else dropped.push(`${rec.fileName} (${errs[0]})`);
+    }
+
+    if (usable.length === 0) {
+      setDiagnosis(null);
+      setDiagnosisUsage(null);
+      setDiagnosisError(
+        `None of the selected swings passed sanity checks:\n• ${dropped.join(
+          "\n• ",
+        )}`,
+      );
+      return;
+    }
+
+    const combined = {
+      multi_angle: true,
+      note:
+        "These are SEPARATE swings recorded from different camera angles — " +
+        "NOT the same swing. Do not assume frame correspondence or a shared " +
+        "timeline. Treat them as independent samples of the same golfer's " +
+        "tendencies. Use each angle for what it measures best: face_on for " +
+        "sway, head movement, and the X-factor proxy; down_the_line for spine " +
+        "angle / loss of posture, early extension, and swing plane. If the " +
+        "angles disagree, say so and explain which angle is more reliable for " +
+        "that fault.",
+      golfer_level: "intermediate",
+      club: "iron",
+      swings: usable,
+    };
+
+    setDiagnosisLoading(true);
+    setDiagnosisError(null);
+    setDiagnosis(null);
+    setDiagnosisUsage(null);
+    try {
+      const res = await fetch("/api/diagnose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(combined),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDiagnosisError(data.error ?? `Request failed (${res.status})`);
+      } else {
+        setDiagnosis(data.text ?? "(no text returned)");
+        setDiagnosisUsage(data.usage ?? null);
+        if (dropped.length > 0) {
+          setDiagnosisError(
+            `Excluded ${dropped.length} swing(s) that failed checks:\n• ${dropped.join(
+              "\n• ",
+            )}`,
+          );
+        }
+      }
+    } catch (err) {
+      setDiagnosisError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDiagnosisLoading(false);
+    }
+  }
+
   async function runAnalysis() {
     const video = videoRef.current;
     const landmarker = landmarkerRef.current;
@@ -441,6 +546,7 @@ export default function Home() {
       video.pause();
       video.playbackRate = 1;
       setStatus("saving");
+      const computed = computeNow();
       try {
         const durationMs = (videoRef.current?.duration ?? 0) * 1000;
         await saveSwing({
@@ -450,6 +556,10 @@ export default function Home() {
           durationMs,
           frames: framesRef.current,
           savedAt: Date.now(),
+          cameraAngle,
+          videoWidth: videoRef.current?.videoWidth,
+          videoHeight: videoRef.current?.videoHeight,
+          measurements: computed,
         });
         await refreshSavedSwings();
         setCacheNote(
@@ -463,7 +573,7 @@ export default function Home() {
       }
       setStatus("done");
       setProgress(1);
-      recomputeMeasurements();
+      setMeasurements(computed);
     };
     const onEnded = () => {
       void finish();
@@ -641,6 +751,36 @@ export default function Home() {
               </div>
             </div>
 
+            <div className="mb-3 flex items-center gap-2 text-xs">
+              <span className="text-zinc-500 dark:text-zinc-400">
+                Camera angle:
+              </span>
+              <div className="inline-flex rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-700">
+                {(
+                  [
+                    ["face_on", "Face-on"],
+                    ["down_the_line", "Down-the-line"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setCameraAngle(value)}
+                    className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+                      cameraAngle === value
+                        ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                        : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-zinc-400">
+                set this before running analysis
+              </span>
+            </div>
+
             <div
               className={`relative overflow-hidden rounded-xl bg-black shadow-lg ${
                 isPortrait ? "mx-auto w-fit" : "w-full"
@@ -717,14 +857,112 @@ export default function Home() {
               </button>
             </div>
 
+            {showDiagnosePayload && (
+              <pre className="mt-3 max-h-80 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+                {JSON.stringify(buildDiagnosePayload(), null, 2)}
+              </pre>
+            )}
+          </section>
+        )}
+
+        {savedSwings.length > 0 && (
+          <section className="mt-10">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Saved swings
+              </h2>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-zinc-400">
+                  {selectedKeys.size} selected
+                </span>
+                <button
+                  type="button"
+                  disabled={selectedKeys.size === 0 || diagnosisLoading}
+                  onClick={runCombinedDiagnosis}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {diagnosisLoading
+                    ? "Asking Claude…"
+                    : "Diagnose selected together"}
+                </button>
+              </div>
+            </div>
+            <p className="mb-3 text-xs text-zinc-400">
+              Select two or more angles of the same golfer (e.g. one face-on +
+              one down-the-line). They&apos;re treated as separate swings, not
+              the same one.
+            </p>
+            <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
+              {savedSwings.map((s) => {
+                const angle = s.cameraAngle ?? "face_on";
+                const angleLabel =
+                  angle === "down_the_line" ? "DTL" : "Face-on";
+                const selected = selectedKeys.has(s.key);
+                return (
+                  <li
+                    key={s.key}
+                    className="flex items-center justify-between gap-3 p-3 text-sm"
+                  >
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleSelected(s.key)}
+                        className="h-4 w-4 shrink-0 accent-emerald-600"
+                      />
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-2">
+                          <span className="truncate font-medium">
+                            {s.fileName}
+                          </span>
+                          <span
+                            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                              angle === "down_the_line"
+                                ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                                : "bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300"
+                            }`}
+                          >
+                            {angleLabel}
+                          </span>
+                        </span>
+                        <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                          {s.frames.length} frames · saved{" "}
+                          {new Date(s.savedAt).toLocaleString()}
+                        </span>
+                      </span>
+                    </label>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => reopenSwing(s)}
+                        className="rounded-md border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                      >
+                        Reopen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeSwing(s.key)}
+                        className="rounded-md border border-zinc-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-zinc-700 dark:hover:bg-red-950"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        {(diagnosis || diagnosisError) && (
+          <section className="mt-8">
             {diagnosisError && (
-              <div className="mt-3 whitespace-pre-wrap rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+              <div className="mb-4 whitespace-pre-wrap rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
                 {diagnosisError}
               </div>
             )}
-
             {diagnosis && (
-              <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                     Claude diagnosis
@@ -744,52 +982,6 @@ export default function Home() {
                 </pre>
               </div>
             )}
-
-            {showDiagnosePayload && (
-              <pre className="mt-3 max-h-80 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-                {JSON.stringify(buildDiagnosePayload(), null, 2)}
-              </pre>
-            )}
-          </section>
-        )}
-
-        {savedSwings.length > 0 && (
-          <section className="mt-10">
-            <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Saved swings
-            </h2>
-            <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
-              {savedSwings.map((s) => (
-                <li
-                  key={s.key}
-                  className="flex items-center justify-between gap-3 p-3 text-sm"
-                >
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{s.fileName}</div>
-                    <div className="text-xs text-zinc-500 dark:text-zinc-400">
-                      {s.frames.length} frames · saved{" "}
-                      {new Date(s.savedAt).toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => reopenSwing(s)}
-                      className="rounded-md border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-                    >
-                      Reopen
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeSwing(s.key)}
-                      className="rounded-md border border-zinc-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-zinc-700 dark:hover:bg-red-950"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
           </section>
         )}
       </div>

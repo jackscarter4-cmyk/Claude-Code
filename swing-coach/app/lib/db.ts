@@ -1,9 +1,12 @@
 import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
+import type { Measurements } from "./metrics";
 
 export type Frame = {
   t_ms: number;
   landmarks: NormalizedLandmark[];
 };
+
+export type CameraAngle = "face_on" | "down_the_line";
 
 export type SwingRecord = {
   key: string;
@@ -12,6 +15,10 @@ export type SwingRecord = {
   durationMs: number;
   frames: Frame[];
   savedAt: number;
+  cameraAngle?: CameraAngle;
+  videoWidth?: number;
+  videoHeight?: number;
+  measurements?: Measurements | null;
 };
 
 const DB_NAME = "swing-coach";
