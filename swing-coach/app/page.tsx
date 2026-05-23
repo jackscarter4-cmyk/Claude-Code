@@ -34,6 +34,16 @@ const WASM_URL =
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task";
 
+// Analysis pass tuning.
+// Play the video slower so MediaPipe gets more wall-clock time per frame
+// (fewer dropped frames on the fast part of the swing).
+const ANALYSIS_PLAYBACK_RATE = 0.5;
+// Trim this many seconds off the END of the clip — the walk-away / re-tee
+// footage after the swing pollutes phase detection.
+const ANALYSIS_TRIM_END_S = 5;
+// Never trim so much that less than this remains to analyze.
+const ANALYSIS_MIN_KEEP_S = 2;
+
 export default function Home() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -397,9 +407,20 @@ export default function Home() {
     video.pause();
     video.currentTime = 0;
     video.muted = true;
+    video.playbackRate = ANALYSIS_PLAYBACK_RATE;
+
+    // How far into the clip we actually analyze (drop the trailing tail).
+    const duration = video.duration || 0;
+    const analysisEndS =
+      duration > ANALYSIS_TRIM_END_S + ANALYSIS_MIN_KEEP_S
+        ? duration - ANALYSIS_TRIM_END_S
+        : duration;
+    const trimmedS = Math.max(0, duration - analysisEndS);
+
     try {
       await video.play();
     } catch (e) {
+      video.playbackRate = 1;
       setError(e instanceof Error ? e.message : String(e));
       setStatus("error");
       return;
@@ -410,6 +431,8 @@ export default function Home() {
       if (finished) return;
       finished = true;
       video.removeEventListener("ended", onEnded);
+      video.pause();
+      video.playbackRate = 1;
       setStatus("saving");
       try {
         const durationMs = (videoRef.current?.duration ?? 0) * 1000;
@@ -422,7 +445,11 @@ export default function Home() {
           savedAt: Date.now(),
         });
         await refreshSavedSwings();
-        setCacheNote(`Saved ${framesRef.current.length} frames to cache.`);
+        setCacheNote(
+          trimmedS > 0.1
+            ? `Saved ${framesRef.current.length} frames (last ${trimmedS.toFixed(1)}s trimmed).`
+            : `Saved ${framesRef.current.length} frames to cache.`,
+        );
       } catch (err) {
         console.warn("Save failed", err);
         setCacheNote("Saved analysis in memory (cache save failed).");
@@ -453,8 +480,14 @@ export default function Home() {
         setFrameCount(framesRef.current.length);
         drawSkeleton(landmarks);
       }
-      if (v.duration) setProgress(metadata.mediaTime / v.duration);
+      if (analysisEndS > 0)
+        setProgress(Math.min(1, metadata.mediaTime / analysisEndS));
 
+      // Stop once we reach the trim point — don't analyze the trailing tail.
+      if (metadata.mediaTime >= analysisEndS) {
+        void finish();
+        return;
+      }
       if (v.ended) {
         void finish();
         return;
