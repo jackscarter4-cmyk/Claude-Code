@@ -158,140 +158,135 @@ function meanShoulderWidthPx(frames: Frame[], W: number): number {
   return count === 0 ? 0 : sum / count;
 }
 
-/** P1: first contiguous window (>=0.4s) of low motion across major joints. */
-function detectP1(
-  frames: Frame[],
-  W: number,
-  H: number,
-  shoulderWidthPx: number,
-  leadSide: "left" | "right",
-): { frame: number; t_ms: number } | null {
-  if (frames.length < 5 || shoulderWidthPx <= 0) return null;
-  const wristIdx = leadSide === "left" ? LM.L_WRIST : LM.R_WRIST;
-  const trackedIdx = [
-    wristIdx,
-    LM.L_SHOULDER,
-    LM.R_SHOULDER,
-    LM.L_HIP,
-    LM.R_HIP,
-  ];
-  // Per-frame velocity magnitude (px) for each tracked joint, averaged.
-  const motion = new Array<number>(frames.length).fill(0);
-  for (let i = 1; i < frames.length; i++) {
-    let sum = 0;
-    let n = 0;
-    for (const idx of trackedIdx) {
-      const a = frames[i - 1].landmarks[idx];
-      const b = frames[i].landmarks[idx];
-      if (!a || !b) continue;
-      const dx = (b.x - a.x) * W;
-      const dy = (b.y - a.y) * H;
-      sum += Math.hypot(dx, dy);
-      n++;
-    }
-    motion[i] = n === 0 ? Infinity : sum / n;
+/** Average of both wrists' y in pixels; NaN where neither wrist is visible. */
+function avgWristYPx(frames: Frame[], H: number): number[] {
+  const out = new Array<number>(frames.length).fill(NaN);
+  for (let i = 0; i < frames.length; i++) {
+    const lw = frames[i].landmarks[LM.L_WRIST];
+    const rw = frames[i].landmarks[LM.R_WRIST];
+    const vals: number[] = [];
+    if (lw && (lw.visibility ?? 0) > 0.4) vals.push(lw.y * H);
+    if (rw && (rw.visibility ?? 0) > 0.4) vals.push(rw.y * H);
+    if (vals.length > 0) out[i] = vals.reduce((a, b) => a + b, 0) / vals.length;
   }
-
-  // Approximate frame rate from time deltas.
-  const totalMs = frames[frames.length - 1].t_ms - frames[0].t_ms;
-  const fps = totalMs > 0 ? ((frames.length - 1) * 1000) / totalMs : 30;
-  const windowLen = Math.max(3, Math.round(fps * SWING.addressStillWindowS));
-  // Low-motion threshold: a real address is nearly still.
-  const threshold = SWING.addressMotionThreshSw * shoulderWidthPx;
-
-  let bestStart = -1;
-  let bestEnd = -1;
-  let bestMean = Infinity;
-  for (let i = 1; i + windowLen <= frames.length; i++) {
-    const slice = motion.slice(i, i + windowLen);
-    const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
-    if (mean < threshold && mean < bestMean) {
-      bestStart = i;
-      bestEnd = i + windowLen - 1;
-      bestMean = mean;
-      // Take the first qualifying window; break.
-      break;
-    }
+  // Fill gaps with nearest valid value so smoothing/gradient stay stable.
+  let lastValid = NaN;
+  for (let i = 0; i < out.length; i++) {
+    if (Number.isNaN(out[i])) out[i] = lastValid;
+    else lastValid = out[i];
   }
-
-  if (bestStart < 0) {
-    // Fall back: first frame with lowest motion in first 30% of video
-    const cutoff = Math.max(5, Math.floor(frames.length * 0.3));
-    let minIdx = 0;
-    let minVal = Infinity;
-    for (let i = 1; i < cutoff; i++) {
-      if (motion[i] < minVal) {
-        minVal = motion[i];
-        minIdx = i;
-      }
-    }
-    return { frame: minIdx, t_ms: frames[minIdx].t_ms };
+  let next = NaN;
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (Number.isNaN(out[i])) out[i] = next;
+    else next = out[i];
   }
-  const mid = Math.floor((bestStart + bestEnd) / 2);
-  return { frame: mid, t_ms: frames[mid].t_ms };
+  for (let i = 0; i < out.length; i++) if (Number.isNaN(out[i])) out[i] = 0;
+  return out;
 }
 
-/** P4: smoothed lead-wrist y minimum (highest) after P1. */
-function detectP4(
-  frames: Frame[],
-  startFrame: number,
-  leadSide: "left" | "right",
-): { frame: number; t_ms: number } | null {
-  if (startFrame >= frames.length - 1) return null;
-  const wristIdx = leadSide === "left" ? LM.L_WRIST : LM.R_WRIST;
-  const ys: number[] = [];
-  for (let i = startFrame; i < frames.length; i++) {
-    const lm = frames[i].landmarks[wristIdx];
-    ys.push(lm ? lm.y : 1);
-  }
-  if (ys.length < 3) return null;
-  const ysSmooth = smooth(ys);
-  let minIdx = 0;
-  let minVal = Infinity;
-  for (let i = 0; i < ysSmooth.length; i++) {
-    if (ysSmooth[i] < minVal) {
-      minVal = ysSmooth[i];
-      minIdx = i;
-    }
-  }
-  const frame = startFrame + minIdx;
-  return { frame, t_ms: frames[frame].t_ms };
+/** Central-difference gradient with unit spacing. */
+function gradient(arr: number[]): number[] {
+  const n = arr.length;
+  const out = new Array<number>(n).fill(0);
+  if (n < 2) return out;
+  out[0] = arr[1] - arr[0];
+  out[n - 1] = arr[n - 1] - arr[n - 2];
+  for (let i = 1; i < n - 1; i++) out[i] = (arr[i + 1] - arr[i - 1]) / 2;
+  return out;
+}
+
+function percentile(values: number[], p: number): number {
+  const arr = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (arr.length === 0) return 0;
+  const idx = Math.min(arr.length - 1, Math.max(0, Math.round((p / 100) * (arr.length - 1))));
+  return arr[idx];
 }
 
 /**
- * P7 (impact): lowest point of the lead-hand arc after the top.
- *
- * In a face-on view the hands descend from P4, reach their lowest point at
- * impact (largest y, since y increases downward), then rise again into the
- * follow-through. The old rule used peak horizontal wrist speed, which peaks
- * in the follow-through and pushed P7 too late. The bottom of the arc is a
- * robust 2D impact proxy for the hands.
+ * Detect P1 (address), P4 (top), P7 (impact) from the averaged wrist-Y
+ * trajectory. Adapted from the GolfPosePro heuristics:
+ *  - average both wrists (robust to occlusion, handedness-free)
+ *  - swing start = first frame whose wrist speed exceeds the 90th percentile
+ *  - swing end = wrist returns to address height after the speed peak
+ *  - address = walk back from swing start while wrist-Y stays flat
+ *  - top = highest hands before the speed peak
+ *  - impact = lowest hands between top and swing end
  */
-function detectP7(
+function detectPhases(
   frames: Frame[],
-  startFrame: number,
-  leadSide: "left" | "right",
-): { frame: number; t_ms: number } | null {
-  if (startFrame >= frames.length - 1) return null;
-  const wristIdx = leadSide === "left" ? LM.L_WRIST : LM.R_WRIST;
-  const ys: number[] = [];
-  for (let i = startFrame; i < frames.length; i++) {
-    const lm = frames[i].landmarks[wristIdx];
-    ys.push(lm ? lm.y : i > 0 ? ys[i - 1] : 0);
-  }
-  if (ys.length < 3) return null;
-  const ysSmooth = smooth(ys);
-  // Largest y after the top = lowest hands = impact.
-  let maxIdx = 0;
-  let maxVal = -Infinity;
-  for (let i = 0; i < ysSmooth.length; i++) {
-    if (ysSmooth[i] > maxVal) {
-      maxVal = ysSmooth[i];
-      maxIdx = i;
+  H: number,
+  shoulderWidthPx: number,
+): Phases {
+  const n = frames.length;
+  if (n < 10) return { P1: null, P4: null, P7: null };
+
+  const totalMs = frames[n - 1].t_ms - frames[0].t_ms;
+  const fps = totalMs > 0 ? ((n - 1) * 1000) / totalMs : 30;
+
+  const wristY = avgWristYPx(frames, H);
+  const smoothed = smooth(wristY);
+  const velMag = gradient(smoothed).map((v) => Math.abs(v));
+
+  // Skip a still intro: if the first frames barely move, start searching later.
+  const precheck = Math.max(3, Math.min(Math.round(fps), Math.floor(n * 0.3)));
+  const earlyMean =
+    velMag.slice(0, precheck).reduce((a, b) => a + b, 0) / precheck;
+  const medianVel = percentile(velMag, 50);
+  const buffer = earlyMean < 0.1 * medianVel ? precheck : 0;
+
+  const threshold = percentile(velMag.slice(buffer), 90);
+  const motionIdx: number[] = [];
+  for (let i = buffer + 1; i < n; i++) if (velMag[i] > threshold) motionIdx.push(i);
+
+  if (motionIdx.length === 0) return { P1: null, P4: null, P7: null };
+
+  const swingStart = motionIdx[0];
+  let peakIdx = motionIdx[0];
+  for (const i of motionIdx) if (velMag[i] > velMag[peakIdx]) peakIdx = i;
+
+  // Swing end: wrist returns closest to its address height after the peak.
+  const addressY = smoothed[swingStart];
+  let swingEnd = n - 1;
+  {
+    let best = Infinity;
+    for (let i = peakIdx + 1; i < n; i++) {
+      const d = Math.abs(smoothed[i] - addressY);
+      if (d < best) {
+        best = d;
+        swingEnd = i;
+      }
     }
   }
-  const frame = startFrame + maxIdx;
-  return { frame, t_ms: frames[frame].t_ms };
+
+  // Address: walk back from swing start while wrist-Y stays flat.
+  const flatThresh = Math.max(1, 0.03 * shoulderWidthPx);
+  const minFlat = Math.max(3, Math.round(fps * 0.2));
+  let addressStart = Math.max(0, swingStart - minFlat);
+  for (let i = swingStart - minFlat; i >= 0; i--) {
+    const window = smoothed.slice(i, swingStart);
+    if (window.length < minFlat) continue;
+    if (stddev(window) < flatThresh) addressStart = i;
+    else break;
+  }
+  const p1Frame = Math.floor((addressStart + swingStart) / 2);
+
+  // Top of backswing: highest hands (min y) before the speed peak.
+  let topIdx = swingStart;
+  for (let i = swingStart; i <= peakIdx && i < n; i++) {
+    if (smoothed[i] < smoothed[topIdx]) topIdx = i;
+  }
+
+  // Impact: lowest hands (max y) between the top and swing end.
+  let impactIdx = topIdx;
+  for (let i = topIdx; i <= swingEnd && i < n; i++) {
+    if (smoothed[i] > smoothed[impactIdx]) impactIdx = i;
+  }
+
+  return {
+    P1: { frame: p1Frame, t_ms: frames[p1Frame].t_ms },
+    P4: { frame: topIdx, t_ms: frames[topIdx].t_ms },
+    P7: { frame: impactIdx, t_ms: frames[impactIdx].t_ms },
+  };
 }
 
 function angularVelocityFromLine(
@@ -436,8 +431,9 @@ export function computeMeasurements(
     shoulderWidthPx = W / 6;
   }
 
-  // Phase detection
-  const P1 = detectP1(frames, W, H, shoulderWidthPx, leadSide);
+  // Phase detection (wrist-Y based; handedness-free).
+  const phases = detectPhases(frames, H, shoulderWidthPx);
+  const P1 = phases.P1;
 
   // Refine shoulder width using P1 frame if available.
   if (P1) {
@@ -457,9 +453,8 @@ export function computeMeasurements(
     }
   }
 
-  const P1Frame = P1?.frame ?? 0;
-  const P4 = detectP4(frames, P1Frame + 1, leadSide);
-  const P7 = P4 ? detectP7(frames, P4.frame + 1, leadSide) : null;
+  const P4 = phases.P4;
+  const P7 = phases.P7;
 
   // If we couldn't determine P4 or P7 reliably, return what we have.
   if (!P4 || !P7 || P7.frame <= P4.frame) {
