@@ -50,8 +50,11 @@ export default function Home() {
   const [fileSize, setFileSize] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [progress, setProgress] = useState(0);
-  const [playheadMs, setPlayheadMs] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
+  const [orientation, setOrientation] = useState<
+    "auto" | "portrait" | "landscape"
+  >("auto");
+  const [videoAspect, setVideoAspect] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cacheNote, setCacheNote] = useState<string | null>(null);
   const [savedSwings, setSavedSwings] = useState<SwingRecord[]>([]);
@@ -188,6 +191,9 @@ export default function Home() {
     if (!video || !canvas) return;
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
+    if (video.videoWidth && video.videoHeight) {
+      setVideoAspect(video.videoWidth / video.videoHeight);
+    }
   }
 
   function clearCanvas() {
@@ -255,10 +261,8 @@ export default function Home() {
     const loop = () => {
       const v = videoRef.current;
       if (!v) return;
-      const t = v.currentTime * 1000;
-      const frame = findNearestFrame(t);
+      const frame = findNearestFrame(v.currentTime * 1000);
       if (frame) drawSkeleton(frame.landmarks);
-      setPlayheadMs(t);
       playbackRafRef.current = requestAnimationFrame(loop);
     };
     playbackRafRef.current = requestAnimationFrame(loop);
@@ -527,65 +531,121 @@ export default function Home() {
       (status === "idle" && landmarkerRef.current != null)) &&
     videoUrl !== null;
 
+  const isPortrait =
+    orientation === "portrait" ||
+    (orientation === "auto" && videoAspect !== null && videoAspect < 1);
+
+  const statusText =
+    status === "loading-model"
+      ? "Loading pose model… (~10 MB, first time only)"
+      : status === "ready"
+        ? "Pose model loaded"
+        : status === "analyzing"
+          ? `Analyzing… ${Math.round(progress * 100)}% · ${frameCount} frames`
+          : status === "saving"
+            ? "Saving to cache…"
+            : status === "done"
+              ? `Ready · ${frameCount} frames`
+              : status === "error"
+                ? "Error"
+                : "Idle";
+  const statusDot =
+    status === "error"
+      ? "bg-red-500"
+      : status === "analyzing" || status === "saving" || status === "loading-model"
+        ? "bg-amber-500 animate-pulse"
+        : status === "done" || status === "ready"
+          ? "bg-emerald-500"
+          : "bg-zinc-400";
+
   return (
     <main className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
-      <div className="mx-auto max-w-3xl px-6 py-12">
-        <header className="mb-8">
-          <h1 className="text-3xl font-semibold tracking-tight">Swing Coach</h1>
-          <p className="mt-2 text-zinc-600 dark:text-zinc-400">
-            Upload a swing video, then run pose analysis.
-          </p>
+      <div className="mx-auto max-w-3xl px-5 py-10 sm:px-6 sm:py-12">
+        <header className="mb-8 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-500/15 ring-1 ring-emerald-500/30">
+            <span className="h-3.5 w-3.5 rounded-full bg-emerald-500" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold tracking-tight">Swing Coach</h1>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Upload a swing, run pose analysis, get a diagnosis.
+            </p>
+          </div>
+          <div className="ml-auto inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+            <span className={`h-2 w-2 rounded-full ${statusDot}`} />
+            {statusText}
+          </div>
         </header>
 
-        <label className="block">
-          <span className="sr-only">Choose a video file</span>
+        <label className="group block cursor-pointer rounded-2xl border-2 border-dashed border-zinc-300 bg-white p-8 text-center transition-colors hover:border-emerald-400 hover:bg-emerald-50/40 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-emerald-600 dark:hover:bg-emerald-950/20">
           <input
             type="file"
             accept="video/mp4,video/*"
             onChange={handleFile}
-            className="block w-full cursor-pointer rounded-lg border border-dashed border-zinc-300 bg-white p-6 text-sm text-zinc-600 file:mr-4 file:rounded-md file:border-0 file:bg-zinc-900 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:file:bg-zinc-100 dark:file:text-zinc-900"
+            className="hidden"
           />
+          <div className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            {fileName ? "Choose a different video" : "Choose a swing video"}
+          </div>
+          <div className="mt-1 text-xs text-zinc-400">
+            MP4 or any video file · stays on your device
+          </div>
         </label>
 
-        <div className="mt-4 space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
-          {status === "loading-model" &&
-            "Loading pose model… (~10 MB, first time only)"}
-          {status === "ready" && "Pose model loaded."}
-          {status === "analyzing" &&
-            `Analyzing… ${Math.round(progress * 100)}% — ${frameCount} frames captured`}
-          {status === "saving" && "Saving to cache…"}
-          {status === "done" && `Done. ${frameCount} frames captured.`}
-          {status === "error" && (
-            <span className="text-red-600">Error: {error}</span>
-          )}
-          {cacheNote && (
-            <div className="text-emerald-700 dark:text-emerald-400">
-              {cacheNote}
-            </div>
-          )}
-        </div>
+        {error && (
+          <div className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+            {error}
+          </div>
+        )}
+        {cacheNote && (
+          <div className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">
+            {cacheNote}
+          </div>
+        )}
 
         {videoUrl && (
           <section className="mt-6">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <span className="truncate text-sm text-zinc-500 dark:text-zinc-400">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-700 dark:text-zinc-300">
                 {fileName}
               </span>
-              <button
-                type="button"
-                disabled={!canRun}
-                onClick={runAnalysis}
-                className="shrink-0 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-              >
-                {status === "analyzing"
-                  ? "Analyzing…"
-                  : framesRef.current.length > 0
-                    ? "Re-run analysis"
-                    : "Run analysis"}
-              </button>
+              <div className="flex items-center gap-2">
+                <div className="inline-flex rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-700">
+                  {(["auto", "portrait", "landscape"] as const).map((o) => (
+                    <button
+                      key={o}
+                      type="button"
+                      onClick={() => setOrientation(o)}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+                        orientation === o
+                          ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                          : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100"
+                      }`}
+                    >
+                      {o}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  disabled={!canRun}
+                  onClick={runAnalysis}
+                  className="shrink-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {status === "analyzing"
+                    ? "Analyzing…"
+                    : framesRef.current.length > 0
+                      ? "Re-run analysis"
+                      : "Run analysis"}
+                </button>
+              </div>
             </div>
 
-            <div className="relative w-full overflow-hidden rounded-lg bg-black shadow">
+            <div
+              className={`relative overflow-hidden rounded-xl bg-black shadow-lg ${
+                isPortrait ? "mx-auto w-fit" : "w-full"
+              }`}
+            >
               <video
                 ref={videoRef}
                 src={videoUrl}
@@ -597,12 +657,14 @@ export default function Home() {
                 onSeeked={() => {
                   const v = videoRef.current;
                   if (!v) return;
-                  const t = v.currentTime * 1000;
-                  const frame = findNearestFrame(t);
+                  const frame = findNearestFrame(v.currentTime * 1000);
                   if (frame) drawSkeleton(frame.landmarks);
-                  setPlayheadMs(t);
                 }}
-                className="block w-full"
+                className={
+                  isPortrait
+                    ? "mx-auto block max-h-[72vh] w-auto"
+                    : "block w-full"
+                }
               />
               <canvas
                 ref={canvasRef}
@@ -636,11 +698,6 @@ export default function Home() {
 
         {measurements && (
           <section className="mt-8">
-            <ForceTransferHeatmap
-              measurements={measurements}
-              currentTimeMs={playheadMs}
-            />
-            <div className="mt-6" />
             <MeasurementsPanel measurements={measurements} />
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
@@ -870,75 +927,5 @@ function MeasurementsPanel({ measurements }: { measurements: Measurements }) {
         ))}
       </dl>
     </details>
-  );
-}
-
-function heatColor(v: number): string {
-  // 0 -> cool blue, 1 -> hot red. v in [0,1].
-  const t = Math.min(1, Math.max(0, v));
-  const hue = 220 - 220 * t; // 220 (blue) -> 0 (red)
-  const light = 30 + 35 * t;
-  return `hsl(${hue}, 85%, ${light}%)`;
-}
-
-function ForceTransferHeatmap({
-  measurements,
-  currentTimeMs,
-}: {
-  measurements: Measurements;
-  currentTimeMs: number;
-}) {
-  const series = measurements.sequenceSeries;
-  if (!series || series.t_ms.length === 0) return null;
-
-  // Nearest sample to the current playhead.
-  let idx = 0;
-  let best = Infinity;
-  for (let i = 0; i < series.t_ms.length; i++) {
-    const d = Math.abs(series.t_ms[i] - currentTimeMs);
-    if (d < best) {
-      best = d;
-      idx = i;
-    }
-  }
-
-  const links: { name: string; v: number }[] = [
-    { name: "Pelvis", v: series.pelvis[idx] ?? 0 },
-    { name: "Thorax", v: series.thorax[idx] ?? 0 },
-    { name: "Arm", v: series.arm[idx] ?? 0 },
-    { name: "Club", v: series.club[idx] ?? 0 },
-  ];
-
-  return (
-    <div className="mt-6 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          Power transfer (speed through the chain)
-        </h3>
-        <span className="text-xs text-zinc-400">play the video to animate</span>
-      </div>
-      <div className="grid grid-cols-4 gap-2">
-        {links.map((l) => (
-          <div key={l.name} className="text-center">
-            <div
-              className="mx-auto h-16 w-full rounded-md transition-colors duration-75"
-              style={{ backgroundColor: heatColor(l.v) }}
-            />
-            <div className="mt-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">
-              {l.name}
-            </div>
-            <div className="font-mono text-[10px] text-zinc-400">
-              {Math.round(l.v * 100)}%
-            </div>
-          </div>
-        ))}
-      </div>
-      <p className="mt-3 text-[11px] leading-snug text-zinc-400">
-        Each block shows that segment&apos;s speed (0-100% of its own max) at the
-        current frame. An efficient swing lights up left-to-right: pelvis →
-        thorax → arm → club. This visualizes sequence/speed transfer, not
-        measured force.
-      </p>
-    </div>
   );
 }
