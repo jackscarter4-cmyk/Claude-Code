@@ -17,7 +17,6 @@ import {
 } from "./lib/db";
 import {
   computeMeasurements,
-  extrapolateClubhead,
   type Measurements,
 } from "./lib/metrics";
 
@@ -227,32 +226,6 @@ export default function Home() {
       ctx.beginPath();
       ctx.arc(lm.x * W, lm.y * H, r, 0, Math.PI * 2);
       ctx.fill();
-    }
-
-    // Extrapolated club (shaft + head), once we know the body scale.
-    if (measurements && measurements.shoulderWidthPx > 0) {
-      const leadSide = measurements.handedness === "right" ? "left" : "right";
-      const wristIdx = leadSide === "left" ? 15 : 16;
-      const wrist = landmarks[wristIdx];
-      const head = extrapolateClubhead(
-        landmarks,
-        leadSide,
-        measurements.shoulderWidthPx,
-        W,
-        H,
-      );
-      if (wrist && head && (wrist.visibility ?? 0) > 0.3) {
-        ctx.strokeStyle = "#38bdf8";
-        ctx.lineWidth = Math.max(2, W / 350);
-        ctx.beginPath();
-        ctx.moveTo(wrist.x * W, wrist.y * H);
-        ctx.lineTo(head.x * W, head.y * H);
-        ctx.stroke();
-        ctx.fillStyle = "#0ea5e9";
-        ctx.beginPath();
-        ctx.arc(head.x * W, head.y * H, r * 1.4, 0, Math.PI * 2);
-        ctx.fill();
-      }
     }
   }
 
