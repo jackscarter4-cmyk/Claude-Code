@@ -15,6 +15,8 @@ const LM = {
   R_WRIST: 16,
   L_HIP: 23,
   R_HIP: 24,
+  L_ANKLE: 27,
+  R_ANKLE: 28,
 } as const;
 
 export type Phases = {
@@ -54,6 +56,16 @@ export type RotationMetrics = {
   xFactorProxyDeg: number; // shoulder - pelvis at P4 (label as proxy)
 };
 
+export type ImpactMetrics = {
+  // Hand-arc low point relative to stance center, s_w-normalized and signed
+  // toward the target. + = target side (ball-first); - = behind (fat risk).
+  lowPointNorm: number;
+  // Hands ahead of the extrapolated clubhead at impact, signed toward target.
+  // + = forward shaft lean (compression); - = flip/scoop. PROXY (uses club
+  // extrapolation), not a measured shaft angle.
+  shaftLeanNorm: number;
+};
+
 // Per-frame normalized (0..1) segment speeds for the transfer heatmap.
 export type SequenceSeries = {
   t_ms: number[];
@@ -75,6 +87,7 @@ export type Measurements = {
     headSwayNorm: number;
     rotation: RotationMetrics;
     club: ClubMetrics;
+    impact: ImpactMetrics;
   };
   sequenceSeries: SequenceSeries | null;
 };
@@ -103,6 +116,7 @@ function emptyMeasurements(shoulderWidthPx = 0): Measurements {
         xFactorProxyDeg: 0,
       },
       club: { peakSpeedMph: 0, peakSpeedMs: 0, shaftLoadProxy: 0 },
+      impact: { lowPointNorm: 0, shaftLeanNorm: 0 },
     },
     sequenceSeries: null,
   };
@@ -695,6 +709,48 @@ export function computeMeasurements(
   const pelvisRotationDegP4 = safeNum(pelvisRot.deg[P4.frame] ?? 0);
   const shoulderRotationDegP4 = safeNum(thoraxRot.deg[P4.frame] ?? 0);
 
+  // --- Impact / strike proxies ---
+  // Target direction inferred from the lead wrist's horizontal velocity at
+  // impact (hands sweep toward the target through the ball).
+  const leadWristXpx = frames.map(
+    (f) => (f.landmarks[leadWrist]?.x ?? 0) * W,
+  );
+  const leadWristVx = derivative(smooth(leadWristXpx), times);
+  const targetSign = Math.sign(leadWristVx[P7.frame]) || 1;
+
+  // Low point of the hand arc (P7) relative to stance center (ankles).
+  let lowPointNorm = 0;
+  {
+    const aL = frames[P7.frame].landmarks[LM.L_ANKLE];
+    const aR = frames[P7.frame].landmarks[LM.R_ANKLE];
+    const lw = frames[P7.frame].landmarks[leadWrist];
+    if (aL && aR && lw && shoulderWidthPx > 0) {
+      const stanceCenterX = ((aL.x + aR.x) / 2) * W;
+      const lowX = lw.x * W;
+      lowPointNorm = safeNum(
+        ((lowX - stanceCenterX) * targetSign) / shoulderWidthPx,
+      );
+    }
+  }
+
+  // Forward shaft lean: hands ahead of the extrapolated clubhead at impact.
+  let shaftLeanNorm = 0;
+  {
+    const ch = extrapolateClubhead(
+      frames[P7.frame].landmarks,
+      leadSide,
+      shoulderWidthPx,
+      W,
+      H,
+    );
+    const lw = frames[P7.frame].landmarks[leadWrist];
+    if (ch && lw && shoulderWidthPx > 0) {
+      shaftLeanNorm = safeNum(
+        ((lw.x - ch.x) * W * targetSign) / shoulderWidthPx,
+      );
+    }
+  }
+
   // Normalized per-frame speeds for the transfer heatmap.
   const normSeries = (a: number[]) => {
     let m = 0;
@@ -777,6 +833,7 @@ export function computeMeasurements(
         peakSpeedMph: safeNum(peakSpeedMs * 2.23694),
         shaftLoadProxy: safeNum(peakAccel * CLUB.headMassKg),
       },
+      impact: { lowPointNorm, shaftLeanNorm },
     },
     sequenceSeries,
   };

@@ -90,28 +90,44 @@ export function gradeSwing(m: Measurements, angle: CameraAngle): SwingGrade {
 
   const factors: FactorScore[] = [];
 
-  // Shared across angles.
+  // Strike factors — how the ball gets struck — are the focus, so they carry
+  // the most weight. Low point relative to stance = ball-first vs fat.
+  factors.push({
+    key: "lowpoint",
+    label: "Strike / low point",
+    score: scoreBand(m.metrics.impact.lowPointNorm, 0.0, 0.35, -0.5, 0.8),
+    value: `${m.metrics.impact.lowPointNorm.toFixed(2)} s_w ${
+      m.metrics.impact.lowPointNorm >= 0 ? "ahead" : "behind"
+    }`,
+    ideal: "at / just ahead of center",
+    weight: 2,
+  });
+  factors.push({
+    key: "shaftlean",
+    label: "Shaft lean (proxy)",
+    score: scoreBand(m.metrics.impact.shaftLeanNorm, 0.05, 0.45, -0.4, 0.8),
+    value: `${m.metrics.impact.shaftLeanNorm.toFixed(2)} s_w`,
+    ideal: "hands ahead",
+    weight: 1.5,
+  });
+
+  // Tempo & backswing length vary a lot by player — keep them as low-weight
+  // "style" factors with wide tolerances so they barely move the overall.
   factors.push({
     key: "tempo",
-    label: "Tempo",
-    score: scoreBand(tempoRatio, 2.7, 3.3, 1.3, 4.7),
+    label: "Tempo (style)",
+    score: scoreBand(tempoRatio, 2.2, 3.8, 1.0, 5.5),
     value: `${tempoRatio.toFixed(1)}:1`,
-    ideal: `${SWING.tempoRatioTarget}:1`,
-    weight: 1,
+    ideal: `~${SWING.tempoRatioTarget}:1`,
+    weight: 0.25,
   });
   factors.push({
     key: "backswing",
-    label: "Backswing length",
-    score: scoreBand(
-      backswingS,
-      SWING.backswingDurationS.min,
-      SWING.backswingDurationS.max,
-      0.4,
-      1.3,
-    ),
+    label: "Backswing length (style)",
+    score: scoreBand(backswingS, 0.55, 1.05, 0.3, 1.7),
     value: `${backswingS.toFixed(2)}s`,
-    ideal: `${SWING.backswingDurationS.min}-${SWING.backswingDurationS.max}s`,
-    weight: 0.5,
+    ideal: "varies by player",
+    weight: 0.25,
   });
 
   const seqScore = m.metrics.kinematicSequence.correct
