@@ -20,6 +20,11 @@ import {
   computeMeasurements,
   type Measurements,
 } from "./lib/metrics";
+import {
+  type SwingGrade,
+  combineGrades,
+  gradeSwing,
+} from "./lib/grade";
 
 type Status =
   | "idle"
@@ -62,16 +67,8 @@ export default function Home() {
   const [cacheNote, setCacheNote] = useState<string | null>(null);
   const [savedSwings, setSavedSwings] = useState<SwingRecord[]>([]);
   const [measurements, setMeasurements] = useState<Measurements | null>(null);
-  const [showDiagnosePayload, setShowDiagnosePayload] = useState(false);
-  const [diagnosis, setDiagnosis] = useState<string | null>(null);
-  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
-  const [diagnosisError, setDiagnosisError] = useState<string | null>(null);
-  const [diagnosisUsage, setDiagnosisUsage] = useState<{
-    input_tokens?: number;
-    output_tokens?: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  } | null>(null);
+  const [combinedGrade, setCombinedGrade] = useState<SwingGrade | null>(null);
+  const [combineNote, setCombineNote] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -162,10 +159,6 @@ export default function Home() {
     setProgress(0);
     setCacheNote(null);
     setMeasurements(null);
-    setDiagnosis(null);
-    setDiagnosisError(null);
-    setDiagnosisUsage(null);
-    setShowDiagnosePayload(false);
     clearCanvas();
     if (status !== "loading-model" && status !== "error") setStatus("ready");
 
@@ -285,143 +278,6 @@ export default function Home() {
     return () => stopPlaybackOverlay();
   }, []);
 
-  function fpsOf(frames: Frame[]): number {
-    return frames.length > 1
-      ? Math.round(
-          (1000 * (frames.length - 1)) /
-            (frames[frames.length - 1].t_ms - frames[0].t_ms),
-        )
-      : 0;
-  }
-
-  function buildDiagnosePayload() {
-    const frames = framesRef.current;
-    return {
-      camera_angle: cameraAngle,
-      handedness: measurements?.handedness ?? "right",
-      club: "iron",
-      golfer_level: "intermediate",
-      fps: fpsOf(frames),
-      fileName,
-      fileSize,
-      frameCount: frames.length,
-      measurements,
-    };
-  }
-
-  function payloadFromRecord(record: SwingRecord) {
-    return {
-      camera_angle: record.cameraAngle ?? "face_on",
-      handedness: record.measurements?.handedness ?? "right",
-      club: "iron",
-      golfer_level: "intermediate",
-      fps: fpsOf(record.frames),
-      fileName: record.fileName,
-      fileSize: record.fileSize,
-      frameCount: record.frames.length,
-      measurements: record.measurements ?? null,
-    };
-  }
-
-  function sanityCheck(payload: {
-    measurements: Measurements | null;
-    frameCount: number;
-  }) {
-    const errors: string[] = [];
-    const m = payload.measurements;
-    if (!m) {
-      errors.push("No measurements computed.");
-      return errors;
-    }
-    const p = m.phases;
-
-    if (!p.P1 || !p.P4 || !p.P7) {
-      const missing = (["P1", "P4", "P7"] as const).filter((k) => !p[k]);
-      errors.push(`Phase detection missing ${missing.join(", ")}.`);
-      return errors;
-    }
-
-    if (payload.frameCount < 30)
-      errors.push(
-        `Only ${payload.frameCount} frames captured — need at least 30 to cover P1–P8.`,
-      );
-
-    if (p.P4.frame <= p.P1.frame)
-      errors.push(
-        `P4 (frame ${p.P4.frame}) is not after P1 (frame ${p.P1.frame}) — phase detection failed.`,
-      );
-    if (p.P7.frame <= p.P4.frame)
-      errors.push(
-        `P7 (frame ${p.P7.frame}) is not after P4 (frame ${p.P4.frame}) — phase detection failed.`,
-      );
-
-    if (p.P7.frame - p.P4.frame < 5)
-      errors.push(
-        `P4 and P7 are ${p.P7.frame - p.P4.frame} frames apart — phase detection failed.`,
-      );
-
-    if (p.P1.frame < 10)
-      errors.push(
-        `P1 at frame ${p.P1.frame} — too close to video start, likely false.`,
-      );
-    if (p.P7.frame > payload.frameCount - 10)
-      errors.push(
-        `P7 at frame ${p.P7.frame} of ${payload.frameCount} — too close to video end, likely false.`,
-      );
-
-    const ks = m.metrics.kinematicSequence;
-    const peakTimes = new Set([
-      ks.pelvisPeakMs,
-      ks.thoraxPeakMs,
-      ks.armPeakMs,
-      ks.clubPeakMs,
-    ]);
-    if (peakTimes.size < 4)
-      errors.push(
-        `Kinematic peaks not distinct: ${peakTimes.size} unique times.`,
-      );
-
-    return errors;
-  }
-
-  async function runDiagnosis() {
-    if (!measurements) return;
-    const payload = buildDiagnosePayload();
-    const errors = sanityCheck(payload);
-    if (errors.length > 0) {
-      setDiagnosis(null);
-      setDiagnosisUsage(null);
-      setDiagnosisError(
-        `Pose data failed sanity checks — not sending to Claude:\n• ${errors.join(
-          "\n• ",
-        )}`,
-      );
-      return;
-    }
-    setDiagnosisLoading(true);
-    setDiagnosisError(null);
-    setDiagnosis(null);
-    setDiagnosisUsage(null);
-    try {
-      const res = await fetch("/api/diagnose", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setDiagnosisError(data.error ?? `Request failed (${res.status})`);
-      } else {
-        setDiagnosis(data.text ?? "(no text returned)");
-        setDiagnosisUsage(data.usage ?? null);
-      }
-    } catch (err) {
-      setDiagnosisError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDiagnosisLoading(false);
-    }
-  }
-
   function toggleSelected(key: string) {
     setSelectedKeys((prev) => {
       const next = new Set(prev);
@@ -431,75 +287,34 @@ export default function Home() {
     });
   }
 
-  async function runCombinedDiagnosis() {
+  function gradeSelected() {
     const selected = savedSwings.filter((s) => selectedKeys.has(s.key));
-    if (selected.length === 0) return;
-
-    const usable: ReturnType<typeof payloadFromRecord>[] = [];
-    const dropped: string[] = [];
+    const grades: SwingGrade[] = [];
+    const skipped: string[] = [];
     for (const rec of selected) {
-      const p = payloadFromRecord(rec);
-      const errs = sanityCheck(p);
-      if (errs.length === 0) usable.push(p);
-      else dropped.push(`${rec.fileName} (${errs[0]})`);
+      if (!rec.measurements) {
+        skipped.push(`${rec.fileName} (no stored analysis — re-run it)`);
+        continue;
+      }
+      const g = gradeSwing(rec.measurements, rec.cameraAngle ?? "face_on");
+      if (g.valid) grades.push(g);
+      else skipped.push(`${rec.fileName} (no full swing detected)`);
     }
-
-    if (usable.length === 0) {
-      setDiagnosis(null);
-      setDiagnosisUsage(null);
-      setDiagnosisError(
-        `None of the selected swings passed sanity checks:\n• ${dropped.join(
-          "\n• ",
-        )}`,
+    if (grades.length === 0) {
+      setCombinedGrade(null);
+      setCombineNote(
+        skipped.length
+          ? `Couldn't grade: ${skipped.join("; ")}`
+          : "Select swings to grade.",
       );
       return;
     }
-
-    const combined = {
-      multi_angle: true,
-      note:
-        "These are SEPARATE swings recorded from different camera angles — " +
-        "NOT the same swing. Do not assume frame correspondence or a shared " +
-        "timeline. Treat them as independent samples of the same golfer's " +
-        "tendencies. Use each angle for what it measures best: face_on for " +
-        "sway, head movement, and the X-factor proxy; down_the_line for spine " +
-        "angle / loss of posture, early extension, and swing plane. If the " +
-        "angles disagree, say so and explain which angle is more reliable for " +
-        "that fault.",
-      golfer_level: "intermediate",
-      club: "iron",
-      swings: usable,
-    };
-
-    setDiagnosisLoading(true);
-    setDiagnosisError(null);
-    setDiagnosis(null);
-    setDiagnosisUsage(null);
-    try {
-      const res = await fetch("/api/diagnose", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(combined),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setDiagnosisError(data.error ?? `Request failed (${res.status})`);
-      } else {
-        setDiagnosis(data.text ?? "(no text returned)");
-        setDiagnosisUsage(data.usage ?? null);
-        if (dropped.length > 0) {
-          setDiagnosisError(
-            `Excluded ${dropped.length} swing(s) that failed checks:\n• ${dropped.join(
-              "\n• ",
-            )}`,
-          );
-        }
-      }
-    } catch (err) {
-      setDiagnosisError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDiagnosisLoading(false);
-    }
+    setCombinedGrade(combineGrades(grades));
+    setCombineNote(
+      `Combined ${grades.length} swing(s)${
+        skipped.length ? `; skipped ${skipped.length}` : ""
+      }.`,
+    );
   }
 
   async function runAnalysis() {
@@ -625,9 +440,10 @@ export default function Home() {
       `Reopened cached analysis (${record.frames.length} frames). Re-select the video file to view it.`,
     );
     setStatus("done");
-    setShowDiagnosePayload(false);
+    if (record.cameraAngle) setCameraAngle(record.cameraAngle);
     clearCanvas();
-    recomputeMeasurements();
+    if (record.measurements) setMeasurements(record.measurements);
+    else recomputeMeasurements();
   }
 
   async function removeSwing(key: string) {
@@ -678,7 +494,7 @@ export default function Home() {
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">Swing Coach</h1>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Upload a swing, run pose analysis, get a diagnosis.
+              Upload a swing, run pose analysis, get a score.
             </p>
           </div>
           <div className="ml-auto inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
@@ -837,31 +653,12 @@ export default function Home() {
         )}
 
         {measurements && (
-          <section className="mt-8">
+          <section className="mt-8 space-y-6">
+            <GradeCard
+              grade={gradeSwing(measurements, cameraAngle)}
+              title={`Swing grade · ${cameraAngle === "down_the_line" ? "Down-the-line" : "Face-on"}`}
+            />
             <MeasurementsPanel measurements={measurements} />
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                disabled={diagnosisLoading}
-                onClick={runDiagnosis}
-                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {diagnosisLoading ? "Asking Claude…" : "Diagnose with Claude"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowDiagnosePayload((v) => !v)}
-                className="rounded-md border border-zinc-300 px-3 py-2 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-              >
-                {showDiagnosePayload ? "Hide" : "Show"} raw payload
-              </button>
-            </div>
-
-            {showDiagnosePayload && (
-              <pre className="mt-3 max-h-80 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-                {JSON.stringify(buildDiagnosePayload(), null, 2)}
-              </pre>
-            )}
           </section>
         )}
 
@@ -877,20 +674,18 @@ export default function Home() {
                 </span>
                 <button
                   type="button"
-                  disabled={selectedKeys.size === 0 || diagnosisLoading}
-                  onClick={runCombinedDiagnosis}
+                  disabled={selectedKeys.size === 0}
+                  onClick={gradeSelected}
                   className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {diagnosisLoading
-                    ? "Asking Claude…"
-                    : "Diagnose selected together"}
+                  Grade selected together
                 </button>
               </div>
             </div>
             <p className="mb-3 text-xs text-zinc-400">
               Select two or more angles of the same golfer (e.g. one face-on +
-              one down-the-line). They&apos;re treated as separate swings, not
-              the same one.
+              one down-the-line). Each angle scores the factors it can measure,
+              and they combine into one fuller scorecard.
             </p>
             <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
               {savedSwings.map((s) => {
@@ -954,38 +749,88 @@ export default function Home() {
           </section>
         )}
 
-        {(diagnosis || diagnosisError) && (
+        {(combinedGrade || combineNote) && (
           <section className="mt-8">
-            {diagnosisError && (
-              <div className="mb-4 whitespace-pre-wrap rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
-                {diagnosisError}
+            {combineNote && (
+              <div className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+                {combineNote}
               </div>
             )}
-            {diagnosis && (
-              <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                    Claude diagnosis
-                  </h3>
-                  {diagnosisUsage && (
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                      {diagnosisUsage.input_tokens ?? 0} in ·{" "}
-                      {diagnosisUsage.output_tokens ?? 0} out
-                      {diagnosisUsage.cache_read_input_tokens != null &&
-                        diagnosisUsage.cache_read_input_tokens > 0 &&
-                        ` · ${diagnosisUsage.cache_read_input_tokens} cached`}
-                    </span>
-                  )}
-                </div>
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-900 dark:text-zinc-100">
-                  {diagnosis}
-                </pre>
-              </div>
+            {combinedGrade && combinedGrade.valid && (
+              <GradeCard grade={combinedGrade} title="Combined scorecard" />
             )}
           </section>
         )}
       </div>
     </main>
+  );
+}
+
+function scoreColor(score: number): string {
+  if (score >= 8) return "text-emerald-600 dark:text-emerald-400";
+  if (score >= 6) return "text-lime-600 dark:text-lime-400";
+  if (score >= 4) return "text-amber-600 dark:text-amber-400";
+  return "text-red-600 dark:text-red-400";
+}
+
+function scoreBarColor(score: number): string {
+  if (score >= 8) return "bg-emerald-500";
+  if (score >= 6) return "bg-lime-500";
+  if (score >= 4) return "bg-amber-500";
+  return "bg-red-500";
+}
+
+function GradeCard({ grade, title }: { grade: SwingGrade; title: string }) {
+  if (!grade.valid) return null;
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            {title}
+          </h3>
+          <div className="mt-1 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            {grade.label}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className={`text-4xl font-bold ${scoreColor(grade.overall)}`}>
+            {grade.overall.toFixed(1)}
+          </div>
+          <div className="text-xs text-zinc-400">/ 10 overall</div>
+        </div>
+      </div>
+      <div className="space-y-3">
+        {grade.factors.map((f) => (
+          <div key={f.key}>
+            <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+              <span className="text-zinc-700 dark:text-zinc-300">
+                {f.label}
+              </span>
+              <span className="flex items-baseline gap-2">
+                <span className="font-mono text-xs text-zinc-400">
+                  {f.value} · ideal {f.ideal}
+                </span>
+                <span className={`font-mono font-semibold ${scoreColor(f.score)}`}>
+                  {f.score.toFixed(1)}
+                </span>
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+              <div
+                className={`h-full ${scoreBarColor(f.score)}`}
+                style={{ width: `${(f.score / 10) * 100}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-[11px] leading-snug text-zinc-400">
+        Each factor is scored against published biomechanics bands. Depth-based
+        factors (posture, early extension) only score from a down-the-line clip;
+        turn and sway score from face-on.
+      </p>
+    </div>
   );
 }
 
