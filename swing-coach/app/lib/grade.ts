@@ -15,6 +15,7 @@ export type SwingGrade = {
   factors: FactorScore[];
   overall: number; // 0..10, weighted average of factors
   label: string;
+  focus: string | null; // the factor most worth improving
   valid: boolean; // false if we couldn't detect a full swing
 };
 
@@ -22,7 +23,14 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
-/** 10 inside [lo,hi], fading linearly to 0 at the hard bounds. */
+// Nothing scores below this — the point is to encourage improvement, not to
+// hand out demoralizing zeros for an amateur swing.
+const FLOOR = 4;
+
+/**
+ * Encouraging band score: full marks inside [lo,hi], then gentle partial
+ * credit out to the hard bounds (and never below FLOOR).
+ */
 function scoreBand(
   v: number,
   lo: number,
@@ -31,21 +39,31 @@ function scoreBand(
   hardHi: number,
 ): number {
   if (v >= lo && v <= hi) return 10;
-  if (v < lo) return clamp((10 * (v - hardLo)) / (lo - hardLo), 0, 10);
-  return clamp((10 * (hardHi - v)) / (hardHi - hi), 0, 10);
+  if (v < lo) {
+    return clamp(10 - (10 - FLOOR) * ((lo - v) / (lo - hardLo)), FLOOR, 10);
+  }
+  return clamp(10 - (10 - FLOOR) * ((v - hi) / (hardHi - hi)), FLOOR, 10);
 }
 
-/** 10 at 0, fading to 0 at the fault threshold (lower is better). */
+/**
+ * Encouraging "lower is better" score. Full marks while comfortably under the
+ * fault line, ~6.5 at the fault line itself, easing to FLOOR beyond it.
+ */
 function scoreLowerBetter(absVal: number, fault: number): number {
-  return clamp(10 * (1 - absVal / fault), 0, 10);
+  const good = 0.5 * fault; // at or under this = clean
+  if (absVal <= good) return 10;
+  if (absVal <= fault) {
+    return 10 - 3.5 * ((absVal - good) / (fault - good)); // 10 -> 6.5
+  }
+  return clamp(6.5 - (6.5 - FLOOR) * ((absVal - fault) / fault), FLOOR, 6.5);
 }
 
 function gradeLabel(overall: number): string {
   if (overall >= 8.5) return "Tour-like";
-  if (overall >= 7) return "Strong";
-  if (overall >= 5.5) return "Solid";
-  if (overall >= 4) return "Developing";
-  return "Needs work";
+  if (overall >= 7) return "Dialed in";
+  if (overall >= 5.5) return "On track";
+  if (overall >= 4.5) return "Coming along";
+  return "Building blocks";
 }
 
 /**
@@ -57,7 +75,13 @@ function gradeLabel(overall: number): string {
 export function gradeSwing(m: Measurements, angle: CameraAngle): SwingGrade {
   const { P1, P4, P7 } = m.phases;
   if (!P1 || !P4 || !P7) {
-    return { factors: [], overall: 0, label: "No swing detected", valid: false };
+    return {
+      factors: [],
+      overall: 0,
+      label: "No swing detected",
+      focus: null,
+      valid: false,
+    };
   }
 
   const backswingS = (P4.t_ms - P1.t_ms) / 1000;
@@ -93,7 +117,7 @@ export function gradeSwing(m: Measurements, angle: CameraAngle): SwingGrade {
   const seqScore = m.metrics.kinematicSequence.correct
     ? 10
     : m.metrics.kinematicSequence.order.length === 4
-      ? 5
+      ? 6.5
       : null;
   if (seqScore !== null) {
     factors.push({
@@ -162,7 +186,22 @@ export function gradeSwing(m: Measurements, angle: CameraAngle): SwingGrade {
   }
 
   const overall = weightedAverage(factors);
-  return { factors, overall, label: gradeLabel(overall), valid: true };
+  return {
+    factors,
+    overall,
+    label: gradeLabel(overall),
+    focus: weakestFactor(factors),
+    valid: true,
+  };
+}
+
+function weakestFactor(factors: FactorScore[]): string | null {
+  let weakest: FactorScore | null = null;
+  for (const f of factors) {
+    if (f.score >= 8) continue; // already good — not a focus
+    if (!weakest || f.score < weakest.score) weakest = f;
+  }
+  return weakest?.label ?? null;
 }
 
 function weightedAverage(factors: FactorScore[]): number {
@@ -179,7 +218,13 @@ function weightedAverage(factors: FactorScore[]): number {
 export function combineGrades(grades: SwingGrade[]): SwingGrade {
   const valid = grades.filter((g) => g.valid);
   if (valid.length === 0) {
-    return { factors: [], overall: 0, label: "No swing detected", valid: false };
+    return {
+      factors: [],
+      overall: 0,
+      label: "No swing detected",
+      focus: null,
+      valid: false,
+    };
   }
   const byKey = new Map<string, FactorScore[]>();
   for (const g of valid) {
@@ -195,5 +240,11 @@ export function combineGrades(grades: SwingGrade[]): SwingGrade {
     factors.push({ ...arr[0], score });
   }
   const overall = weightedAverage(factors);
-  return { factors, overall, label: gradeLabel(overall), valid: true };
+  return {
+    factors,
+    overall,
+    label: gradeLabel(overall),
+    focus: weakestFactor(factors),
+    valid: true,
+  };
 }

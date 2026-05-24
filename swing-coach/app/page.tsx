@@ -825,7 +825,13 @@ function GradeCard({ grade, title }: { grade: SwingGrade; title: string }) {
           </div>
         ))}
       </div>
-      <p className="mt-4 text-[11px] leading-snug text-zinc-400">
+      {grade.focus && (
+        <div className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+          Focus next: <span className="font-semibold">{grade.focus}</span> — the
+          factor with the most room to gain.
+        </div>
+      )}
+      <p className="mt-3 text-[11px] leading-snug text-zinc-400">
         Each factor is scored against published biomechanics bands. Depth-based
         factors (posture, early extension) only score from a down-the-line clip;
         turn and sway score from face-on.
