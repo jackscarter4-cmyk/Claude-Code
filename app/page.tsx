@@ -621,6 +621,37 @@ export default function Home() {
           </div>
         </header>
 
+        {!videoUrl && !cameraOn && (
+          <div className="mb-6 rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+            <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+              Upload or record a golf swing and get an instant scorecard. Your
+              video is analyzed <strong>entirely on your device</strong> — it
+              never gets uploaded anywhere.
+            </p>
+            <ol className="mt-3 grid gap-2 text-sm text-zinc-600 dark:text-zinc-400 sm:grid-cols-3">
+              <li className="flex gap-2">
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                  1
+                </span>
+                Upload or record a swing (face-on or down-the-line).
+              </li>
+              <li className="flex gap-2">
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                  2
+                </span>
+                Run analysis — it tracks your body and finds the key swing
+                positions.
+              </li>
+              <li className="flex gap-2">
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                  3
+                </span>
+                Get a 0–10 scorecard with the one thing to work on next.
+              </li>
+            </ol>
+          </div>
+        )}
+
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="group block cursor-pointer rounded-2xl border-2 border-dashed border-zinc-300 bg-white p-8 text-center transition-colors hover:border-emerald-400 hover:bg-emerald-50/40 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-emerald-600 dark:hover:bg-emerald-950/20">
             <input
