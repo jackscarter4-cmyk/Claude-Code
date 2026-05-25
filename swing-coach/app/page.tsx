@@ -77,6 +77,14 @@ export default function Home() {
   const playbackRafRef = useRef<number | null>(null);
   const lastDetectTsRef = useRef<number>(0);
 
+  const recordPreviewRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordError, setRecordError] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     setStatus("loading-model");
@@ -146,14 +154,11 @@ export default function Home() {
     }
   }
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function ingestVideo(name: string, size: number, url: string) {
     if (videoUrl) URL.revokeObjectURL(videoUrl);
-    const url = URL.createObjectURL(file);
     setVideoUrl(url);
-    setFileName(file.name);
-    setFileSize(file.size);
+    setFileName(name);
+    setFileSize(size);
     framesRef.current = [];
     setFrameCount(0);
     setProgress(0);
@@ -163,7 +168,7 @@ export default function Home() {
     if (status !== "loading-model" && status !== "error") setStatus("ready");
 
     try {
-      const cached = await loadSwing(makeKey(file.name, file.size));
+      const cached = await loadSwing(makeKey(name, size));
       if (cached) {
         framesRef.current = cached.frames;
         setFrameCount(cached.frames.length);
@@ -183,6 +188,119 @@ export default function Home() {
       console.warn("Cache lookup failed", err);
     }
   }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await ingestVideo(file.name, file.size, URL.createObjectURL(file));
+  }
+
+  function pickRecordMime(): string {
+    const candidates = [
+      "video/mp4",
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm",
+    ];
+    for (const c of candidates) {
+      if (
+        typeof MediaRecorder !== "undefined" &&
+        MediaRecorder.isTypeSupported(c)
+      )
+        return c;
+    }
+    return "";
+  }
+
+  async function openCamera() {
+    setRecordError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: 1280, height: 720 },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOn(true);
+      // Attach after state flips so the preview element exists.
+      setTimeout(() => {
+        if (recordPreviewRef.current) {
+          recordPreviewRef.current.srcObject = stream;
+          void recordPreviewRef.current.play().catch(() => {});
+        }
+      }, 0);
+    } catch (err) {
+      setRecordError(
+        err instanceof Error
+          ? `Camera access failed: ${err.message}`
+          : "Camera access failed.",
+      );
+    }
+  }
+
+  function closeCamera() {
+    if (recorderRef.current && recording) {
+      try {
+        recorderRef.current.stop();
+      } catch {
+        // ignore
+      }
+    }
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    if (recordPreviewRef.current) recordPreviewRef.current.srcObject = null;
+    setCameraOn(false);
+    setRecording(false);
+  }
+
+  function startRecording() {
+    const stream = streamRef.current;
+    if (!stream) return;
+    const mimeType = pickRecordMime();
+    chunksRef.current = [];
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined,
+      );
+    } catch (err) {
+      setRecordError(
+        err instanceof Error ? err.message : "Could not start recording.",
+      );
+      return;
+    }
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    recorder.onstop = async () => {
+      const type = mimeType || "video/webm";
+      const blob = new Blob(chunksRef.current, { type });
+      const ext = type.includes("mp4") ? "mp4" : "webm";
+      const name = `recording-${new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")}.${ext}`;
+      // Release the camera once we have the clip.
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (recordPreviewRef.current) recordPreviewRef.current.srcObject = null;
+      setCameraOn(false);
+      setRecording(false);
+      await ingestVideo(name, blob.size, URL.createObjectURL(blob));
+    };
+    recorderRef.current = recorder;
+    recorder.start();
+    setRecording(true);
+  }
+
+  function stopRecording() {
+    if (recorderRef.current && recording) recorderRef.current.stop();
+  }
+
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
   function syncCanvas() {
     const video = videoRef.current;
@@ -503,20 +621,86 @@ export default function Home() {
           </div>
         </header>
 
-        <label className="group block cursor-pointer rounded-2xl border-2 border-dashed border-zinc-300 bg-white p-8 text-center transition-colors hover:border-emerald-400 hover:bg-emerald-50/40 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-emerald-600 dark:hover:bg-emerald-950/20">
-          <input
-            type="file"
-            accept="video/mp4,video/*"
-            onChange={handleFile}
-            className="hidden"
-          />
-          <div className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-            {fileName ? "Choose a different video" : "Choose a swing video"}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="group block cursor-pointer rounded-2xl border-2 border-dashed border-zinc-300 bg-white p-8 text-center transition-colors hover:border-emerald-400 hover:bg-emerald-50/40 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-emerald-600 dark:hover:bg-emerald-950/20">
+            <input
+              type="file"
+              accept="video/mp4,video/*"
+              onChange={handleFile}
+              className="hidden"
+            />
+            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              {fileName ? "Choose a different video" : "Upload a swing video"}
+            </div>
+            <div className="mt-1 text-xs text-zinc-400">
+              MP4 or any video file · stays on your device
+            </div>
+          </label>
+          <button
+            type="button"
+            onClick={cameraOn ? closeCamera : openCamera}
+            className="rounded-2xl border-2 border-dashed border-zinc-300 bg-white p-8 text-center transition-colors hover:border-emerald-400 hover:bg-emerald-50/40 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-emerald-600 dark:hover:bg-emerald-950/20"
+          >
+            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              {cameraOn ? "Close camera" : "Record a swing"}
+            </div>
+            <div className="mt-1 text-xs text-zinc-400">
+              Use your device camera
+            </div>
+          </button>
+        </div>
+
+        {recordError && (
+          <div className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+            {recordError}
           </div>
-          <div className="mt-1 text-xs text-zinc-400">
-            MP4 or any video file · stays on your device
+        )}
+
+        {cameraOn && (
+          <div className="mt-4">
+            <div className="relative overflow-hidden rounded-xl bg-black shadow-lg">
+              <video
+                ref={recordPreviewRef}
+                muted
+                playsInline
+                autoPlay
+                className="block w-full"
+              />
+              {recording && (
+                <div className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                  REC
+                </div>
+              )}
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              {!recording ? (
+                <button
+                  type="button"
+                  onClick={startRecording}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
+                >
+                  Start recording
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={stopRecording}
+                  className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900"
+                >
+                  Stop &amp; use clip
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={closeCamera}
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
-        </label>
+        )}
 
         {error && (
           <div className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
