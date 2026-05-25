@@ -4,6 +4,8 @@ import type { Measurements } from "./metrics";
 export type Frame = {
   t_ms: number;
   landmarks: NormalizedLandmark[];
+  // Experimental: motion-tracked clubhead estimate (normalized image coords).
+  club?: { x: number; y: number } | null;
 };
 
 export type CameraAngle = "face_on" | "down_the_line";

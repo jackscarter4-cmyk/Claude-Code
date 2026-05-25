@@ -25,6 +25,7 @@ import {
   combineGrades,
   gradeSwing,
 } from "./lib/grade";
+import { type GrayFrame, detectClubhead } from "./lib/clubTrack";
 
 type Status =
   | "idle"
@@ -77,6 +78,8 @@ export default function Home() {
   const playbackRafRef = useRef<number | null>(null);
   const lastDetectTsRef = useRef<number>(0);
 
+  const motionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const prevGrayRef = useRef<GrayFrame | null>(null);
   const recordPreviewRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -320,7 +323,39 @@ export default function Home() {
     ctx?.clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  function drawSkeleton(landmarks: NormalizedLandmark[]) {
+  // Downscaled grayscale snapshot of the current video frame, for motion-based
+  // clubhead tracking.
+  function grabGray(video: HTMLVideoElement): GrayFrame | null {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    const w = 240;
+    const h = Math.max(1, Math.round((240 * vh) / vw));
+    let canvas = motionCanvasRef.current;
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      motionCanvasRef.current = canvas;
+    }
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, w, h);
+    const rgba = ctx.getImageData(0, 0, w, h).data;
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < gray.length; i++) {
+      const j = i * 4;
+      gray[i] = (rgba[j] + rgba[j + 1] + rgba[j + 2]) / 3;
+    }
+    return { data: gray, w, h };
+  }
+
+  function drawSkeleton(
+    landmarks: NormalizedLandmark[],
+    club?: { x: number; y: number } | null,
+  ) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -348,6 +383,25 @@ export default function Home() {
       if ((lm.visibility ?? 0) < 0.3) continue;
       ctx.beginPath();
       ctx.arc(lm.x * W, lm.y * H, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Experimental motion-tracked clubhead (blue), drawn from the lead wrist.
+    if (club) {
+      const leadWristIdx = 15; // lead = left for right-handed (default)
+      const altWristIdx = 16;
+      const lw = landmarks[leadWristIdx] ?? landmarks[altWristIdx];
+      ctx.strokeStyle = "#38bdf8";
+      ctx.lineWidth = Math.max(2, W / 350);
+      if (lw) {
+        ctx.beginPath();
+        ctx.moveTo(lw.x * W, lw.y * H);
+        ctx.lineTo(club.x * W, club.y * H);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#0ea5e9";
+      ctx.beginPath();
+      ctx.arc(club.x * W, club.y * H, r * 1.6, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -379,7 +433,7 @@ export default function Home() {
       const v = videoRef.current;
       if (!v) return;
       const frame = findNearestFrame(v.currentTime * 1000);
-      if (frame) drawSkeleton(frame.landmarks);
+      if (frame) drawSkeleton(frame.landmarks, frame.club);
       playbackRafRef.current = requestAnimationFrame(loop);
     };
     playbackRafRef.current = requestAnimationFrame(loop);
@@ -442,6 +496,7 @@ export default function Home() {
 
     stopPlaybackOverlay();
     framesRef.current = [];
+    prevGrayRef.current = null;
     setFrameCount(0);
     setProgress(0);
     setCacheNote(null);
@@ -526,9 +581,28 @@ export default function Home() {
       const result = landmarkerRef.current.detectForVideo(v, detectTs);
       const landmarks = result.landmarks[0];
       if (landmarks) {
-        framesRef.current.push({ t_ms, landmarks });
+        // Experimental clubhead via motion diff vs. the previous frame.
+        let club: { x: number; y: number } | null = null;
+        const gray = grabGray(v);
+        if (gray && prevGrayRef.current && landmarks[15] && landmarks[12]) {
+          const lead = landmarks[15]; // lead wrist (left, right-handed default)
+          const ls = landmarks[11];
+          const rs = landmarks[12];
+          const swNorm =
+            ls && rs ? Math.hypot(ls.x - rs.x, ls.y - rs.y) : 0.18;
+          const clubLenNorm = Math.max(0.1, 2.9 * swNorm); // ~club/shoulder ratio
+          club = detectClubhead(
+            prevGrayRef.current,
+            gray,
+            lead.x,
+            lead.y,
+            clubLenNorm,
+          );
+        }
+        prevGrayRef.current = gray;
+        framesRef.current.push({ t_ms, landmarks, club });
         setFrameCount(framesRef.current.length);
-        drawSkeleton(landmarks);
+        drawSkeleton(landmarks, club);
       }
       if (analysisEndS > 0)
         setProgress(Math.min(1, metadata.mediaTime / analysisEndS));
@@ -829,7 +903,7 @@ export default function Home() {
                   const v = videoRef.current;
                   if (!v) return;
                   const frame = findNearestFrame(v.currentTime * 1000);
-                  if (frame) drawSkeleton(frame.landmarks);
+                  if (frame) drawSkeleton(frame.landmarks, frame.club);
                 }}
                 className={
                   isPortrait
@@ -860,7 +934,7 @@ export default function Home() {
                   if (!v) return;
                   v.currentTime = t_ms / 1000;
                   const frame = findNearestFrame(t_ms);
-                  if (frame) drawSkeleton(frame.landmarks);
+                  if (frame) drawSkeleton(frame.landmarks, frame.club);
                 }}
               />
             )}
