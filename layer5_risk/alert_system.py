@@ -44,7 +44,7 @@ class AlertSystem:
         if not self._should_send(message):
             return
 
-        full_message = f"[{level}] Prediction Market Engine: {message}"
+        full_message = f"[{level}] Stock Trading Engine: {message}"
         logger.warning("ALERT: %s", full_message)
 
         tasks = []
@@ -80,8 +80,8 @@ class AlertSystem:
             return
         try:
             msg = MIMEText(message)
-            msg["Subject"] = "Prediction Market Engine Alert"
-            msg["From"] = "alerts@prediction-engine.local"
+            msg["Subject"] = "Stock Trading Engine Alert"
+            msg["From"] = "alerts@stock-trading-engine.local"
             msg["To"] = config.alerts.alert_email
             with smtplib.SMTP("localhost", 25) as server:
                 server.send_message(msg)

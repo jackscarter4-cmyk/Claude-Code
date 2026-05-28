@@ -17,7 +17,7 @@ from layer1_data.database import Database
 logger = logging.getLogger(__name__)
 
 REDDIT_HEADERS = {
-    "User-Agent": "PredictionMarketBot/1.0 (autonomous trading research)"
+    "User-Agent": "StockTradingBot/1.0 (autonomous trading research)"
 }
 
 

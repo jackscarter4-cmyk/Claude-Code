@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Autonomous Stock Trading Engine
-================================
+Stock Trading Engine
+====================
 
 Starts all 6 layers concurrently:
 
-  Layer 1  — Data ingestion (Alpaca WebSocket, RSS, Twitter, Reddit)
-  Layer 2  — Rule-based signal trader (momentum, volume, rebalance signals)
-  Layer 3  — AI stock analysis agent (Claude API, 5-factor quant framework)
-  Layer 4  — Sentiment and hype detection
+  Layer 1  — Data ingestion (Alpaca IEX WebSocket, RSS, Twitter, watchlist bootstrap)
+  Layer 2  — Rule-based signal trading (momentum, volume spikes, rebalance)
+  Layer 3  — AI directional trading agent (Claude API stock analysis)
+  Layer 4  — Sentiment and hype detection (Reddit, Twitter)
   Layer 5  — Risk management and portfolio oversight
-  Layer 6  — Self-improvement loop (weekly performance review)
+  Layer 6  — Self-improvement loop (performance review + prompt update)
 
 Usage:
     python main.py [--layers 1,2,3,4,5,6]
@@ -26,6 +26,7 @@ import logging
 import os
 import signal
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -55,17 +56,40 @@ def _ensure_data_dirs():
         Path(d).mkdir(parents=True, exist_ok=True)
 
 
-async def main(layers: set[int]):
-    _ensure_data_dirs()
+def _check_market_hours():
+    """Log a warning if starting outside market hours."""
+    now = datetime.now(timezone.utc)
+    weekday = now.weekday()
+    hour = now.hour
+    minute = now.minute
+    # Market open 9:30am-4pm ET = 13:30-20:00 UTC (EDT)
+    is_weekday = weekday < 5
+    after_open = (hour > 13) or (hour == 13 and minute >= 30)
+    before_close = hour < 20
+    is_market_open = is_weekday and after_open and before_close
 
-    # -- Imports here so the CLI starts fast even with missing deps
+    if not is_market_open:
+        day_name = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekday]
+        logger.warning(
+            "Starting outside market hours (%s %02d:%02d UTC). "
+            "Layer 2/3 trading will be paused until 9:30am ET (13:30 UTC) on a weekday.",
+            day_name, hour, minute,
+        )
+    else:
+        logger.info("Market is currently OPEN — all layers active")
+
+
+async def main(layers: set):
+    _ensure_data_dirs()
+    _check_market_hours()
+
     from config.settings import config
     from layer1_data.database import Database
     from layer5_risk.alert_system import AlertSystem
     from utils.broker_client import BrokerClient
 
     db = Database()
-    client = BrokerClient()
+    broker = BrokerClient()
     alert = AlertSystem()
 
     tasks = []
@@ -76,14 +100,14 @@ async def main(layers: set[int]):
     risk_guardian = None
     if 5 in layers:
         from layer5_risk.risk_guardian import RiskGuardian
-        risk_guardian = RiskGuardian(db, client, alert)
+        risk_guardian = RiskGuardian(db, broker, alert)
         tasks.append(
             asyncio.create_task(risk_guardian.run_forever(), name="layer5_risk")
         )
         logger.info("Layer 5 (Risk Guardian) started")
 
     # ----------------------------------------------------------------
-    # Layer 1 — Data pipeline
+    # Layer 1 — Data pipeline (watchlist bootstrap + price feed)
     # ----------------------------------------------------------------
     if 1 in layers:
         from layer1_data.pipeline import DataPipeline
@@ -110,22 +134,22 @@ async def main(layers: set[int]):
         logger.info("Layer 4 (Sentiment) started")
 
     # ----------------------------------------------------------------
-    # Layer 2 — Market making
+    # Layer 2 — Signal-based rule trader
     # ----------------------------------------------------------------
     if 2 in layers:
         from layer2_market_making.market_maker import SignalTrader
-        market_maker = SignalTrader(db, client, risk_guardian)
+        signal_trader = SignalTrader(db, broker, risk_guardian)
         tasks.append(
-            asyncio.create_task(market_maker.run_forever(), name="layer2_mm")
+            asyncio.create_task(signal_trader.run_forever(), name="layer2_signal")
         )
-        logger.info("Layer 2 (Market Maker) started")
+        logger.info("Layer 2 (Signal Trader) started")
 
     # ----------------------------------------------------------------
     # Layer 3 — AI trading agent
     # ----------------------------------------------------------------
     if 3 in layers:
         from layer3_ai_agent.agent import AITradingAgent
-        agent = AITradingAgent(db, client, risk_guardian)
+        agent = AITradingAgent(db, broker, risk_guardian)
         tasks.append(
             asyncio.create_task(agent.run_forever(), name="layer3_ai")
         )
@@ -147,13 +171,12 @@ async def main(layers: set[int]):
         return
 
     logger.info(
-        "Engine running with %d tasks. Layers: %s",
+        "Stock trading engine running with %d tasks. Layers: %s",
         len(tasks),
         sorted(layers),
     )
 
     # Graceful shutdown on SIGINT / SIGTERM
-    loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
 
     def _shutdown(signum, frame):
@@ -168,7 +191,7 @@ async def main(layers: set[int]):
     try:
         await asyncio.gather(*tasks, return_exceptions=True)
     finally:
-        await client.close()
+        await broker.close()
         db.close()
         logger.info("Engine stopped cleanly")
 
@@ -178,7 +201,7 @@ async def main(layers: set[int]):
 # ---------------------------------------------------------------------------
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Prediction Market Trading Engine")
+    parser = argparse.ArgumentParser(description="Stock Trading Engine")
     parser.add_argument(
         "--layers",
         default="1,2,3,4,5,6",

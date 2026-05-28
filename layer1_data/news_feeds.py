@@ -94,7 +94,7 @@ MARKET_KEYWORDS = [
 
 class TwitterIngestor:
     """
-    Stream tweets matching prediction-market keywords via the v2
+    Stream tweets matching stock market keywords via the v2
     filtered-stream endpoint.
 
     Requires TWITTER_BEARER_TOKEN in the environment.
@@ -111,7 +111,7 @@ class TwitterIngestor:
         return {"Authorization": f"Bearer {config.twitter.bearer_token}"}
 
     async def _set_rules(self, session: aiohttp.ClientSession):
-        """Delete existing rules and set fresh prediction-market rules."""
+        """Delete existing rules and set fresh stock market rules."""
         # Fetch existing rules
         async with session.get(self.RULES_URL, headers=self._auth_headers()) as resp:
             data = await resp.json()

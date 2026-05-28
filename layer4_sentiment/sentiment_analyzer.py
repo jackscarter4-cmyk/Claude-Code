@@ -1,13 +1,14 @@
 """
-Layer 4 — Sentiment and hype detection.
+Layer 4 — Sentiment and hype detection for stocks.
 
-Monitors Twitter/X, Reddit, and stored news for spikes in emotional
-language around specific markets. When hype is detected, it signals
-Layer 3 to discount the probability estimate for the hyped side.
+Monitors stored news, Twitter, and Reddit for sentiment spikes around
+watchlist symbols. When hype is detected, the Layer 3 agent can use
+this signal to adjust its conviction level.
 
 Hype score = normalised mention velocity over a rolling window.
 """
 
+import asyncio
 import logging
 import re
 from collections import defaultdict, deque
@@ -25,23 +26,22 @@ HYPE_PATTERNS = [
     r"\b(crash|collapse|plummet|tank|dump|rug pull|dead)\b",
     r"\b(guaranteed|certain|obvious|no way|impossible|never)\b",
     r"\b(everyone knows|everyone is|obviously|clearly|definitely)\b",
-    r"!{3,}",          # Three or more exclamation marks
+    r"!{3,}",
     r"\b(FOMO|FUD|shill|ape in|all in)\b",
 ]
 
 HYPE_REGEX = re.compile("|".join(HYPE_PATTERNS), re.IGNORECASE)
 
 
-def compute_hype_score(texts: list[str]) -> float:
+def compute_hype_score(texts: list) -> float:
     """
-    Return a hype score 0–1 based on the fraction of texts containing
+    Return a hype score 0-1 based on the fraction of texts containing
     hype language. A score > 0.3 is considered significant.
     """
     if not texts:
         return 0.0
     hits = sum(1 for t in texts if HYPE_REGEX.search(t))
     raw = hits / len(texts)
-    # Amplify: small fractions → larger signal when volume is high
     amplified = raw * min(len(texts) / 10.0, 3.0)
     return min(amplified, 1.0)
 
@@ -49,125 +49,96 @@ def compute_hype_score(texts: list[str]) -> float:
 class SentimentMonitor:
     """
     Continuously scans stored news/tweets for sentiment spikes
-    related to active markets, then writes signals to the database.
+    related to watchlist symbols, then writes signals to the database.
 
     The Layer 3 agent reads these signals when building its analysis prompt.
     """
 
     def __init__(self, db: Database):
         self.db = db
-        # Rolling window: market_id -> deque of (timestamp, hype_score)
-        self._window: dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
+        # Rolling window: symbol -> deque of (timestamp, hype_score)
+        self._window: dict = defaultdict(lambda: deque(maxlen=100))
         self._running = False
 
-    def _extract_market_keywords(self, market: dict) -> list[str]:
-        """Extract meaningful keywords from a market question."""
-        question = market.get("question", "")
-        # Strip common prediction-market filler words
-        stop = {
-            "will", "the", "a", "an", "in", "of", "to", "be", "or", "and",
-            "is", "on", "by", "at", "for", "that", "this", "have", "has",
-            "yes", "no", "win", "lose",
-        }
-        words = [w.strip("?,.!") for w in question.lower().split()]
-        keywords = [w for w in words if len(w) > 3 and w not in stop]
-        return keywords[:8]  # top 8 most relevant
+    def _relevant_texts_for_symbol(
+        self, symbol: str, company_name: Optional[str], news_items: list
+    ) -> list:
+        """Filter news items that mention the symbol or company name."""
+        symbol_lower = symbol.lower()
+        company_words = set()
+        if company_name:
+            company_words = {
+                w for w in company_name.lower().split() if len(w) > 4
+            }
 
-    def _score_market_sentiment(
-        self, market: dict, news_items: list[dict]
-    ) -> tuple[int, float]:
-        """
-        Score how much hype is present for a specific market in recent news.
-
-        Returns (mention_count, hype_score).
-        """
-        keywords = self._extract_market_keywords(market)
-        if not keywords:
-            return 0, 0.0
-
-        # Find news that mentions this market's keywords
-        relevant_texts = []
+        relevant = []
         for item in news_items:
-            text = (item.get("headline", "") + " " + item.get("body", "")).lower()
-            if any(kw in text for kw in keywords):
-                relevant_texts.append(item.get("headline", "") + " " + item.get("body", ""))
-
-        score = compute_hype_score(relevant_texts)
-        return len(relevant_texts), score
+            text = (
+                item.get("headline", "") + " " + item.get("body", "")
+            ).lower()
+            if symbol_lower in text or any(w in text for w in company_words):
+                relevant.append(
+                    item.get("headline", "") + " " + item.get("body", "")
+                )
+        return relevant
 
     async def _run_cycle(self, window_hours: int = 4):
-        """
-        One sentiment analysis cycle over all active markets.
-        """
-        import asyncio
-
-        markets = self.db.get_active_markets()
-        # Get news from the last window
+        """One sentiment analysis cycle over all active watchlist symbols."""
+        symbols = self.db.get_active_symbols()
         news_items = self.db.get_recent_news(hours=window_hours, limit=500)
 
         if not news_items:
             return
 
-        for market in markets:
-            market_id = market["id"]
+        for symbol in symbols:
             try:
-                count, score = self._score_market_sentiment(market, news_items)
+                entry = self.db.get_watchlist_entry(symbol)
+                company_name = (entry or {}).get("name")
+                relevant = self._relevant_texts_for_symbol(
+                    symbol, company_name, news_items
+                )
+                if not relevant:
+                    continue
 
-                if count > 0:
-                    # Store in DB for Layer 3 to read
-                    self.db.insert_sentiment(
-                        market_id=market_id,
-                        keyword=",".join(self._extract_market_keywords(market)[:3]),
-                        platform="news_aggregate",
-                        count=count,
-                        score=score,
-                    )
-                    # Update rolling window
-                    self._window[market_id].append(
-                        (datetime.now(timezone.utc), score)
-                    )
+                score = compute_hype_score(relevant)
+                count = len(relevant)
 
-                    if score > 0.3:
-                        logger.info(
-                            "HYPE SIGNAL: %s | score=%.2f mentions=%d",
-                            market.get("question", "")[:60],
-                            score,
-                            count,
-                        )
+                self.db.insert_sentiment(
+                    symbol=symbol,
+                    keyword=symbol,
+                    platform="news_aggregate",
+                    count=count,
+                    score=score,
+                )
+                self._window[symbol].append(
+                    (datetime.now(timezone.utc), score)
+                )
+
+                if score > 0.3:
+                    logger.info(
+                        "HYPE SIGNAL: %s | score=%.2f mentions=%d",
+                        symbol, score, count,
+                    )
             except Exception as exc:
-                logger.debug("Sentiment error for %s: %s", market_id[:8], exc)
+                logger.debug("Sentiment error for %s: %s", symbol, exc)
 
-        logger.debug("Sentiment cycle complete for %d markets", len(markets))
+        logger.debug("Sentiment cycle complete for %d symbols", len(symbols))
 
-    def get_hype_adjusted_probability(
-        self, base_probability: float, market_id: str
-    ) -> float:
+    def get_hype_adjusted_outlook_discount(self, symbol: str) -> float:
         """
-        Apply hype discount to a base probability estimate.
-
-        If there is a strong hype signal, shift the probability towards 0.5
-        (i.e., towards uncertainty) proportional to the hype score.
+        Return a discount factor [0, hype_discount_factor] to apply to
+        an AI outlook when hype is detected.  0 means no adjustment.
         """
-        sentiment = self.db.get_latest_sentiment(market_id)
+        sentiment = self.db.get_latest_sentiment(symbol)
         if not sentiment:
-            return base_probability
-
+            return 0.0
         hype_score = float(sentiment.get("hype_score", 0))
         if hype_score < 0.2:
-            return base_probability
-
-        discount = hype_score * config.sentiment.hype_discount_factor
-        # Pull the estimate toward 0.5
-        adjusted = base_probability + discount * (0.5 - base_probability)
-        logger.debug(
-            "Hype adjustment for %s: %.3f → %.3f (hype=%.2f)",
-            market_id[:8], base_probability, adjusted, hype_score,
-        )
-        return max(0.01, min(0.99, adjusted))
+            return 0.0
+        return hype_score * config.sentiment.hype_discount_factor
 
     async def run_forever(self, interval: int = 300):
         """Run sentiment cycles every `interval` seconds."""
-        import asyncio
         self._running = True
         while self._running:
             try:

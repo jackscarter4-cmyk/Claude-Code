@@ -1,13 +1,16 @@
-# Autonomous Prediction Market Trading Engine
+# Stock Trading Engine
 # Python 3.11+
 
 # Anthropic SDK (Layer 3 AI agent)
 anthropic>=0.40.0
 
+# Alpaca brokerage SDK
+alpaca-py>=0.26.0
+
 # Async HTTP client (REST API calls, webhooks)
 aiohttp>=3.9.0
 
-# WebSocket client (Layer 1 price feed)
+# WebSocket client (Layer 1 Alpaca IEX price feed)
 websockets>=12.0
 
 # RSS feed parsing (Layer 1 news)
@@ -17,11 +20,11 @@ feedparser>=6.0.11
 python-dotenv>=1.0.0
 
 # Standard library additions (Python 3.11 includes most of these, listed for clarity)
-# asyncio — stdlib
-# sqlite3 — stdlib
-# dataclasses — stdlib
-# json — stdlib
-# csv — stdlib
-# logging — stdlib
-# re — stdlib
-# hmac / hashlib — stdlib
+# asyncio -- stdlib
+# sqlite3 -- stdlib
+# dataclasses -- stdlib
+# json -- stdlib
+# csv -- stdlib
+# logging -- stdlib
+# re -- stdlib
+# hmac / hashlib -- stdlib

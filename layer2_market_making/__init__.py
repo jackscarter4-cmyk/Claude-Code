@@ -1,4 +1,4 @@
-from .market_maker import MarketMaker
-from .arbitrage_detector import ArbitrageDetector, ArbOpportunity
+from .market_maker import SignalTrader
+from .signal_scanner import SignalScanner, TradingSignal
 
-__all__ = ["MarketMaker", "ArbitrageDetector", "ArbOpportunity"]
+__all__ = ["SignalTrader", "SignalScanner", "TradingSignal"]
