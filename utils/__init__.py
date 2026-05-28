@@ -1,3 +1,3 @@
-from .polymarket_client import PolymarketClient
+from .broker_client import BrokerClient, YahooFinanceClient
 
-__all__ = ["PolymarketClient"]
+__all__ = ["BrokerClient", "YahooFinanceClient"]

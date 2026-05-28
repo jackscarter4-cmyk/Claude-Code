@@ -1,5 +1,5 @@
 """
-Central configuration for the Prediction Market Trading Engine.
+Central configuration for the Stock Trading Engine.
 All secrets are loaded from environment variables — never hardcode keys.
 """
 
@@ -9,16 +9,24 @@ from typing import Optional
 
 
 @dataclass
-class PolymarketConfig:
-    api_key: str = field(default_factory=lambda: os.environ.get("POLYMARKET_API_KEY", ""))
-    api_secret: str = field(default_factory=lambda: os.environ.get("POLYMARKET_API_SECRET", ""))
-    api_passphrase: str = field(default_factory=lambda: os.environ.get("POLYMARKET_API_PASSPHRASE", ""))
-    wallet_private_key: str = field(default_factory=lambda: os.environ.get("POLYGON_WALLET_PRIVATE_KEY", ""))
-    wallet_address: str = field(default_factory=lambda: os.environ.get("POLYGON_WALLET_ADDRESS", ""))
-    # Polymarket endpoints
-    rest_host: str = "https://clob.polymarket.com"
-    ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-    gamma_api: str = "https://gamma-api.polymarket.com"
+class AlpacaConfig:
+    api_key: str = field(default_factory=lambda: os.environ.get("ALPACA_API_KEY", ""))
+    api_secret: str = field(default_factory=lambda: os.environ.get("ALPACA_API_SECRET", ""))
+    base_url: str = field(
+        default_factory=lambda: os.environ.get(
+            "ALPACA_BASE_URL", "https://paper-api.alpaca.markets"
+        )
+    )
+    # Alpaca market data WebSocket (IEX feed)
+    ws_url: str = "wss://stream.data.alpaca.markets/v2/iex"
+
+
+@dataclass
+class YahooFinanceConfig:
+    # Base URL for Yahoo Finance chart API (no auth required)
+    chart_url: str = "https://query1.finance.yahoo.com/v8/finance/chart"
+    # Polling interval (seconds) when WebSocket is unavailable
+    poll_interval_seconds: int = 30
 
 
 @dataclass
@@ -34,47 +42,51 @@ class TwitterConfig:
     api_key: str = field(default_factory=lambda: os.environ.get("TWITTER_API_KEY", ""))
     api_secret: str = field(default_factory=lambda: os.environ.get("TWITTER_API_SECRET", ""))
     access_token: str = field(default_factory=lambda: os.environ.get("TWITTER_ACCESS_TOKEN", ""))
-    access_token_secret: str = field(default_factory=lambda: os.environ.get("TWITTER_ACCESS_TOKEN_SECRET", ""))
+    access_token_secret: str = field(
+        default_factory=lambda: os.environ.get("TWITTER_ACCESS_TOKEN_SECRET", "")
+    )
 
 
 @dataclass
 class DatabaseConfig:
-    path: str = field(default_factory=lambda: os.environ.get("DB_PATH", "data/prediction_markets.db"))
+    path: str = field(default_factory=lambda: os.environ.get("DB_PATH", "data/trading.db"))
     csv_dir: str = field(default_factory=lambda: os.environ.get("CSV_DIR", "data/csv"))
 
 
 @dataclass
 class RiskConfig:
-    # Maximum fraction of bankroll to deploy at any time
+    # Maximum fraction of portfolio value to deploy at any time
     max_deployed_fraction: float = 0.80
-    # Maximum fraction of bankroll on any single market
-    max_single_market_fraction: float = 0.05
-    # Daily loss limit as fraction of starting daily bankroll
+    # Maximum fraction of portfolio value for any single stock position
+    max_single_stock_fraction: float = 0.08
+    # Daily loss limit as fraction of starting daily portfolio value
     daily_loss_limit_fraction: float = 0.10
     # Maximum number of simultaneous open positions
-    max_open_positions: int = 50
-    # Minimum edge required before placing a directional trade (Layer 3)
-    min_edge_threshold: float = 0.10
-    # Minimum volume (in USDC) for a market to be considered
-    min_market_volume: float = 10_000.0
-    # Minimum days until resolution to consider trading
-    min_days_to_resolution: int = 1
-    # Maximum number of correlated positions (same underlying)
-    max_correlated_positions: int = 3
-    # Profit-taking target (close position at this return)
-    profit_take_return: float = 0.50
+    max_open_positions: int = 30
+    # Stop-loss from entry price (Layer 3 AI trades)
+    stop_loss_pct: float = 0.08
+    # Maximum sector concentration (fraction of total portfolio)
+    max_sector_concentration: float = 0.40
+    # Profit-taking target — close/alert at this return
+    profit_take_return: float = 0.25
 
 
 @dataclass
-class MarketMakingConfig:
-    # Maximum combined cost for an arbitrage pair to still be profitable
-    max_combined_cost: float = 0.98   # Must be < $1.00
-    # Position size per arb trade (in USDC)
-    position_size_usdc: float = 10.0
-    # Maximum number of simultaneous MM positions
-    max_mm_positions: int = 200
-    # How often to refresh limit orders (seconds)
-    refresh_interval_seconds: int = 30
+class SignalConfig:
+    # Number of calendar days used for momentum lookback
+    momentum_lookback_days: int = 20
+    # Volume spike: multiples of average volume to trigger signal
+    volume_spike_threshold: float = 2.0
+    # Rebalance: drift from target weight that triggers a rebalance signal
+    rebalance_drift_threshold: float = 0.05
+    # Oversold: price pct below 52W high to be considered oversold
+    oversold_threshold: float = -0.15
+    # Overbought: price pct above cost basis to be considered overbought
+    overbought_threshold: float = 0.50
+    # Minimum signal strength (0–1) required to attempt a trade
+    min_signal_strength: float = 0.60
+    # Scan interval during market hours (seconds)
+    scan_interval_seconds: int = 300  # 5 minutes
 
 
 @dataclass
@@ -85,14 +97,14 @@ class SentimentConfig:
     hype_discount_factor: float = 0.15
     # Subreddits to monitor
     subreddits: list = field(default_factory=lambda: [
-        "PredictionMarkets", "politics", "wallstreetbets",
-        "CryptoCurrency", "sports", "worldnews"
+        "stocks", "investing", "wallstreetbets",
+        "StockMarket", "options", "securityanalysis",
+        "personalfinance", "dividends",
     ])
 
 
 @dataclass
 class AlertConfig:
-    # Email or webhook for critical alerts
     alert_webhook_url: str = field(
         default_factory=lambda: os.environ.get("ALERT_WEBHOOK_URL", "")
     )
@@ -103,30 +115,37 @@ class AlertConfig:
 
 @dataclass
 class AppConfig:
-    polymarket: PolymarketConfig = field(default_factory=PolymarketConfig)
+    alpaca: AlpacaConfig = field(default_factory=AlpacaConfig)
+    yahoo: YahooFinanceConfig = field(default_factory=YahooFinanceConfig)
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
     twitter: TwitterConfig = field(default_factory=TwitterConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
-    market_making: MarketMakingConfig = field(default_factory=MarketMakingConfig)
+    signal: SignalConfig = field(default_factory=SignalConfig)
     sentiment: SentimentConfig = field(default_factory=SentimentConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
 
-    # Layer 3 AI agent loop interval (seconds)
-    ai_agent_interval_seconds: int = 600   # 10 minutes
-    # Layer 6 review interval (seconds)
-    review_interval_seconds: int = 604_800  # 1 week
+    # Layer 3 AI agent loop interval (seconds) — 15 minutes
+    ai_agent_interval_seconds: int = 900
+    # Layer 6 review interval (seconds) — 1 week
+    review_interval_seconds: int = 604_800
 
-    # RSS news feeds
+    # Default stock watchlist
+    watchlist: list = field(default_factory=lambda: [
+        "AMZN", "JNJ", "META", "NVDA", "PG", "RIVN", "SPY", "VBIL",
+        "QQQ", "VTI", "MSFT", "AAPL", "GOOGL", "BRK.B", "V", "JPM",
+    ])
+
+    # RSS news feeds focused on financial and market news
     rss_feeds: list = field(default_factory=lambda: [
         "https://feeds.reuters.com/reuters/topNews",
         "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
         "https://feeds.bbci.co.uk/news/rss.xml",
-        "https://www.politico.com/rss/politicopicks.xml",
-        "https://feeds.npr.org/1001/rss.xml",
         "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
-        "https://www.coindesk.com/arc/outboundfeeds/rss/",
-        "https://cointelegraph.com/rss",
+        "https://feeds.npr.org/1001/rss.xml",
+        "https://www.marketwatch.com/rss/topstories",
+        "https://finance.yahoo.com/news/rssindex",
+        "https://www.cnbc.com/id/100003114/device/rss/rss.html",
     ])
 
 
