@@ -1,160 +1,96 @@
-# Autonomous Prediction Market Trading Engine
+# Offline Stock Quant Engine
 
-A fully autonomous, 6-layer trading system for [Polymarket](https://polymarket.com) powered by Claude AI.
+A fully offline stock screening and recommendation engine. **No API keys, no
+broker account, no internet** — it runs entirely on your machine using the
+Python standard library. You feed it stock data; it scores each name on a
+5-factor quant framework and produces risk-sized buy/sell/hold recommendations.
 
-## Architecture
+## What it does
 
 ```
-Layer 1  Data Ingestion      — WebSocket price feed, RSS news, Twitter stream, event calendar
-Layer 2  Market Making       — Automated arbitrage on binary market spreads (pure math)
-Layer 3  AI Trading Agent    — Claude claude-opus-4-6 directional probability analysis
-Layer 4  Sentiment Detection — Hype/FUD detection from social media and news
-Layer 5  Risk Management     — Hard portfolio limits, daily loss caps, anomaly detection
-Layer 6  Self-Improvement    — Weekly performance review + Claude-generated prompt updates
+Layer 1  Local Storage     — SQLite; persists each run's analyses + a portfolio snapshot
+Layer 2  Signal Scan       — Momentum-breakout / oversold / volume-spike / rebalance signals
+Layer 3  Quant Scoring     — 5-factor model (Value, Growth, Profitability, EPS Revisions, Momentum)
+Layer 5  Risk Sizing       — Position size, stop-loss, single-stock / sector / deployment caps
+Layer 6  Performance Review — Trends across stored runs
 ```
 
-## Quick Start
+There is no live trading, no Claude API call, and no social-media scraping —
+those parts of the original design required keys and have been removed.
 
-### 1. Prerequisites
+## Two ways to use it
 
-- Python 3.11+
-- Polymarket account with USDC on Polygon
-- Anthropic API key
-- (Optional) Twitter Developer account for stream access
-
-### 2. Install dependencies
+### `daily_check.py` — quick one-off screen
 
 ```bash
-pip install -r requirements.txt
+# 1. Generate a template CSV and fill it in (from Yahoo Finance, etc.)
+python daily_check.py --template > stocks.csv
+
+# 2. Score it
+python daily_check.py --input stocks.csv
+
+# Or enter stocks interactively
+python daily_check.py --wizard
 ```
 
-### 3. Configure credentials
+### `main.py` — the full engine (adds signals, risk sizing, persistence)
 
 ```bash
-cp .env.example .env
-# Edit .env with your API keys
-export $(cat .env | xargs)
+python main.py --template > stocks.csv
+python main.py --input stocks.csv
 ```
 
-### 4. Run the engine
+## Importing from Webull
+
+Webull gives you positions (symbol, price, cost basis, shares) but **not**
+fundamentals, so it's a two-step flow:
 
 ```bash
-# All 6 layers
-python main.py
+# From an order-history CSV (Account -> History -> Export):
+python main.py --webull-csv webull_orders.csv --export stocks.csv
 
-# Data collection only (no trading — safe to start with)
-python main.py --layers 1,4
+# ...or from a positions JSON dump:
+python main.py --webull-json positions.json --export stocks.csv
 
-# Market making only (Layer 2) + data + risk
-python main.py --layers 1,2,4,5
-
-# Full system
-python main.py --layers 1,2,3,4,5,6
+# Then open stocks.csv, add fundamentals from Yahoo Finance, and score:
+python main.py --input stocks.csv
 ```
 
-## Layer Details
+## The 5-factor model
 
-### Layer 1 — Data Ingestion (Always Running)
+Each factor is scored 0–10 via z-score normalization across the stocks you
+provide, then averaged into a composite that drives the verdict.
 
-- **Polymarket WebSocket**: Streams real-time bid/ask prices for every active market
-- **RSS Feeds**: Reuters, NYT, BBC, Politico, CoinDesk, CoinTelegraph (configurable)
-- **Twitter/X Stream**: Filtered stream for prediction-market keywords
-- **Reddit**: Polls r/PredictionMarkets, r/politics, r/CryptoCurrency, etc.
-- **Structured Events**: FOMC meeting dates, political event calendar
-- All data stored in SQLite (`data/prediction_markets.db`) with CSV export option
+| Factor | Inputs | Higher score when |
+|--------|--------|-------------------|
+| Value | P/E, forward P/E, P/B, EV/EBITDA | cheaper vs. peers |
+| Growth | revenue YoY%, EPS YoY%, 3-yr EPS CAGR | faster growth |
+| Profitability | ROE, ROIC, gross/net margin | more profitable vs. peers |
+| EPS Revisions | 30/60/90-day estimate changes (30d weighted most) | analysts raising estimates |
+| Momentum | 12-1 month return (excl. last month) + RSI | trending up, not overbought |
 
-### Layer 2 — Market Making (Low Risk)
+**Verdict:** composite ≥ 6.5 → BUY, ≤ 3.5 → SELL/AVOID, else HOLD. A red-flag
+cap blocks BUY if Growth or Momentum ≤ 3.0 (mirrors Seeking Alpha's rule).
 
-Monitors every binary market for moments when:
+## Input columns
 
-```
-best_ask(YES) + best_ask(NO) < $1.00
-```
-
-Since one side always resolves to $1.00, the spread is guaranteed profit.
-Places simultaneous limit orders on both sides and rebalances every 30 seconds.
-
-**Configuration** (`config/settings.py`):
-- `max_combined_cost = 0.98` — only trade if combined cost ≤ $0.98
-- `position_size_usdc = 10.0` — $10 per pair
-- `max_mm_positions = 200` — maximum simultaneous pairs
-
-### Layer 3 — AI Directional Agent (Claude API)
-
-Runs every 10 minutes:
-1. Pulls all active markets from DB
-2. Filters for minimum volume + time-to-resolution
-3. For each candidate: fetches news context, price history, sentiment signals
-4. Calls `claude-opus-4-6` with adaptive thinking to estimate true probability
-5. If `|AI estimate − market price| > 10%`, flags as opportunity
-6. Executes trade after risk checks
-
-Uses streaming with `thinking: {type: "adaptive"}` for deep reasoning on complex political/sports/crypto questions.
-
-### Layer 4 — Sentiment Detection
-
-Monitors stored news and social data for hype spikes around specific markets.
-When detected, signals Layer 3 to apply a contrarian discount:
-
-```
-adjusted_prob = base_prob + hype_discount × (0.5 − base_prob)
-```
-
-This automates the "nothing ever happens" strategy — betting against overexcited crowds.
-
-### Layer 5 — Risk Guardian
-
-**Hard limits (cannot be overridden):**
-- Max 80% of bankroll deployed at any time
-- Max 5% of bankroll on any single market
-- Daily loss limit: 10% of opening balance → auto-halt + alert
-- Max 3 correlated positions (same underlying: Trump, Fed, BTC, etc.)
-- Auto profit-take at 50% return
-
-Sends alerts via Slack/Discord webhook when limits are hit.
-
-### Layer 6 — Self-Improvement Loop
-
-Runs weekly:
-1. Computes performance statistics: win rate, PnL, calibration by category
-2. Identifies worst-performing categories and systematic biases
-3. Calls Claude to generate an updated system prompt for Layer 3
-4. Saves updated prompt to `data/updated_system_prompt.txt`
-5. Layer 3 loads this on next startup
+Required: `symbol`, `price`. Everything else is optional — provide what you
+have and the model scores on available factors. Run `--template` to see the
+full column list with examples. Optional fields for Layer 2 signals
+(`high_52w`, `avg_volume`, `current_volume`, `prev_close`, `low_20d`,
+`target_weight`, `earnings_date`) enable the signal scan when present.
 
 ## Configuration
 
-All settings in `config/settings.py`. Key parameters:
+Risk and signal thresholds live in `config/settings.py` (`RiskConfig`,
+`SignalConfig`). The only environment variables are storage paths
+(`DB_PATH`, `CSV_DIR`), both with defaults — you usually don't need a `.env`.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `min_edge_threshold` | 0.10 | Minimum AI vs market gap to trade |
-| `min_market_volume` | $10,000 | Ignore thin markets |
-| `max_deployed_fraction` | 0.80 | Max % bankroll in active positions |
-| `daily_loss_limit_fraction` | 0.10 | Auto-halt threshold |
-| `ai_agent_interval_seconds` | 600 | Layer 3 cycle frequency |
-| `profit_take_return` | 0.50 | Auto-close at 50% gain |
+## Requirements
 
-## Data Schema
-
-SQLite tables in `data/prediction_markets.db`:
-
-- `markets` — All Polymarket markets with metadata
-- `price_ticks` — Real-time price history
-- `news_items` — All ingested news/tweets/posts
-- `trade_log` — Every trade placed (all layers)
-- `sentiment_signals` — Hype scores per market
-- `ai_predictions` — Every Claude estimate with reasoning
-- `performance_snapshots` — Weekly review snapshots
-
-## Starting Capital
-
-| Mode | Recommended Capital |
-|------|-------------------|
-| Layer 2 only (MM) | $500+ |
-| Layer 3 only (AI) | $500+ |
-| Full system | $1,000–$2,000 |
+Python 3.11+. No third-party packages — standard library only.
 
 ## Disclaimer
 
-This system places real money into prediction markets. Past performance does not guarantee future returns. Start with small capital, monitor closely, and adjust risk parameters based on your risk tolerance.
+This is an analysis tool, not financial advice. Scores are relative to the
+universe of stocks you input; add more names for a more meaningful ranking.
