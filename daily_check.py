@@ -104,9 +104,21 @@ _FLOAT_FIELDS = [
     "eps_rev_30d", "eps_rev_60d", "eps_rev_90d",
     "price_12m_ago", "price_1m_ago", "rsi_14",
     "market_cap_b", "dividend_yield", "cost_basis", "shares_held",
-    # Optional Layer 2 signal inputs (engine only)
+    # Layer 2 signal inputs (basic)
     "high_52w", "low_52w", "low_20d", "avg_volume", "current_volume",
     "prev_close", "price_2d_ago", "target_weight",
+    # Risk quantification — enables Kelly Criterion + VaR in Layer 5
+    # annual_volatility: annualized σ (e.g. 0.25 = 25%). Find on Yahoo Finance
+    #   Statistics page under "52-Week Change" implied vol, or compute from
+    #   historical prices. beta: from Yahoo Finance Summary page.
+    # atr_14: 14-day Average True Range in $ (from any charting tool).
+    "annual_volatility", "beta", "atr_14",
+    # Enhanced Layer 2 signals — Bollinger Bands, VWAP, OBV
+    # sma_20: 20-day SMA. bollinger_upper/lower: SMA ± 2σ over 20 days.
+    # All available from Yahoo Finance charts or TradingView.
+    # obv_trend: positive = accumulation, negative = distribution, 0 = neutral.
+    # vwap: session VWAP (from intraday chart or end-of-day (H+L+C)/3).
+    "sma_20", "bollinger_upper", "bollinger_lower", "obv_trend", "vwap",
 ]
 
 _STR_FIELDS = ("sector", "notes", "earnings_date")
@@ -583,8 +595,11 @@ def render_report(results: list[ScoreResult], output=sys.stdout) -> None:
         print(f"  {r.symbol:<8} {score_str:>6} {r.verdict:<8} {r.confidence}", file=output)
 
     print(sep, file=output)
-    print("  Formulas: z-score normalization across input universe.", file=output)
-    print("  Scores are relative — add more stocks for more accurate ranking.", file=output)
+    print("  Scoring: winsorized z-score (3σ clip, MSCI Barra standard) across input universe.", file=output)
+    print("  Factors: Value (HML), Growth (CMA), Profitability (RMW), EPS Revisions,", file=output)
+    print("           Momentum (Jegadeesh-Titman 12-1 month skip-month).", file=output)
+    print("  Layer 5: fractional Kelly sizing (Thorp 1969) when annual_volatility provided.", file=output)
+    print("  Scores are relative — add more stocks for more accurate cross-sectional ranking.", file=output)
     print(sep, file=output)
 
 
@@ -593,14 +608,14 @@ def render_report(results: list[ScoreResult], output=sys.stdout) -> None:
 # ---------------------------------------------------------------------------
 
 TEMPLATE_CSV = """\
-symbol,price,pe_ratio,forward_pe,pb_ratio,ev_ebitda,revenue_growth_yoy,eps_growth_yoy,eps_growth_3y,roe,roic,gross_margin,net_margin,eps_rev_30d,eps_rev_60d,eps_rev_90d,price_12m_ago,price_1m_ago,rsi_14,sector,market_cap_b,dividend_yield,cost_basis,shares_held,notes
-AAPL,189.50,28.5,26.1,45.2,22.1,0.06,0.12,0.10,1.45,0.28,0.43,0.25,-0.02,-0.01,0.03,165.00,188.00,58,Technology,2900,0.005,150.00,10,Example row
-NVDA,875.00,65.0,35.0,32.0,45.0,0.122,0.45,0.60,0.95,0.55,0.73,0.52,0.08,0.12,0.20,495.00,850.00,72,Technology,2150,,600.00,5,Bought during dip
-AMZN,185.00,42.0,32.0,8.5,18.0,0.10,0.35,0.25,0.22,0.12,0.46,0.08,0.04,0.06,0.10,138.00,182.00,61,Consumer Cyclical,1950,,145.00,8,
-JNJ,155.00,14.5,13.0,5.2,12.0,0.04,0.05,0.07,0.22,0.15,0.68,0.19,0.01,0.00,-0.01,148.00,154.00,52,Healthcare,375,0.030,160.00,15,Core holding — underwater
-PG,165.00,26.0,24.0,8.5,18.5,0.03,0.07,0.08,0.28,0.18,0.50,0.18,0.00,0.01,0.02,143.00,164.00,55,Consumer Defensive,390,0.023,187.00,12,Dividend reinvesting
-META,500.00,24.0,20.0,7.0,14.0,0.22,0.55,0.40,0.38,0.25,0.81,0.35,0.06,0.09,0.15,312.00,490.00,65,Technology,1270,,380.00,7,
-MSFT,415.00,35.0,30.0,13.0,24.0,0.17,0.22,0.18,0.38,0.28,0.70,0.35,0.03,0.04,0.07,360.00,410.00,60,Technology,3100,0.007,,0,Watchlist
+symbol,price,pe_ratio,forward_pe,pb_ratio,ev_ebitda,revenue_growth_yoy,eps_growth_yoy,eps_growth_3y,roe,roic,gross_margin,net_margin,eps_rev_30d,eps_rev_60d,eps_rev_90d,price_12m_ago,price_1m_ago,rsi_14,sector,market_cap_b,dividend_yield,cost_basis,shares_held,notes,high_52w,low_52w,low_20d,avg_volume,current_volume,prev_close,price_2d_ago,target_weight,annual_volatility,beta,atr_14,sma_20,bollinger_upper,bollinger_lower,obv_trend,vwap
+AAPL,189.50,28.5,26.1,45.2,22.1,0.06,0.12,0.10,1.45,0.28,0.43,0.25,-0.02,-0.01,0.03,165.00,188.00,58,Technology,2900,0.005,150.00,10,Example row,199.62,124.17,182.00,55000000,48000000,188.50,187.20,,0.22,1.2,2.85,186.00,193.00,179.00,1,188.40
+NVDA,875.00,65.0,35.0,32.0,45.0,0.122,0.45,0.60,0.95,0.55,0.73,0.52,0.08,0.12,0.20,495.00,850.00,72,Technology,2150,,600.00,5,Bought during dip,974.00,402.00,848.00,42000000,65000000,860.00,845.00,,0.48,1.85,12.40,845.00,890.00,800.00,1,858.00
+AMZN,185.00,42.0,32.0,8.5,18.0,0.10,0.35,0.25,0.22,0.12,0.46,0.08,0.04,0.06,0.10,138.00,182.00,61,Consumer Cyclical,1950,,145.00,8,,192.00,118.35,178.00,35000000,32000000,183.20,181.80,,0.25,1.15,3.20,180.00,192.00,168.00,0,182.50
+JNJ,155.00,14.5,13.0,5.2,12.0,0.04,0.05,0.07,0.22,0.15,0.68,0.19,0.01,0.00,-0.01,148.00,154.00,52,Healthcare,375,0.030,160.00,15,Core holding — underwater,175.97,143.13,152.00,8000000,7200000,154.50,154.20,,0.14,0.55,1.85,154.00,160.00,148.00,-1,154.20
+PG,165.00,26.0,24.0,8.5,18.5,0.03,0.07,0.08,0.28,0.18,0.50,0.18,0.00,0.01,0.02,143.00,164.00,55,Consumer Defensive,390,0.023,187.00,12,Dividend reinvesting,172.00,136.40,162.00,6500000,6000000,164.80,164.30,,0.13,0.50,1.60,163.00,168.00,158.00,0,164.50
+META,500.00,24.0,20.0,7.0,14.0,0.22,0.55,0.40,0.38,0.25,0.81,0.35,0.06,0.09,0.15,312.00,490.00,65,Technology,1270,,380.00,7,,531.49,279.40,490.00,18000000,22000000,493.00,488.00,,0.35,1.45,8.50,485.00,515.00,455.00,1,492.00
+MSFT,415.00,35.0,30.0,13.0,24.0,0.17,0.22,0.18,0.38,0.28,0.70,0.35,0.03,0.04,0.07,360.00,410.00,60,Technology,3100,0.007,,0,Watchlist,430.82,309.45,408.00,22000000,20000000,413.00,412.00,,0.20,0.90,4.50,408.00,425.00,391.00,0,412.00
 """
 
 TEMPLATE_JSON = """\

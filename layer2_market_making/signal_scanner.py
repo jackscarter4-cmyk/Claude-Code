@@ -1,14 +1,23 @@
 """
 Layer 2 — Stock signal scanner.
 
-Replaces binary-market arbitrage detection with rule-based trading
-signals for equities:
+Rule-based trading signals for equities:
 
   MOMENTUM_BREAKOUT   — price near 52W high + elevated volume
   OVERSOLD_REBOUND    — price far below 52W high + at 20-day low
   VOLUME_SPIKE        — unusual volume with meaningful price move
   REBALANCE           — position weight has drifted from target
   EARNINGS_DRIFT      — large price move near upcoming earnings date
+  BOLLINGER_OVERSOLD  — price below lower Bollinger Band (%B < 0)
+  BOLLINGER_OVERBOUGHT— price above upper Bollinger Band (%B > 1)
+  VWAP_BREAKOUT       — close above VWAP on elevated volume (institutional buying)
+  VWAP_BREAKDOWN      — close below VWAP on elevated volume (institutional selling)
+
+Bollinger Bands: Bollinger (1983, 2001) — bands at SMA_20 ± 2σ_20 contain ~95%
+  of prices; %B = (price − lower) / (upper − lower).
+VWAP: Berkowitz, Logue & Noser (1988) — standard institutional execution benchmark.
+OBV: Granville (1963) — obv_trend (+ = accumulation, − = distribution) modulates
+  signal strength when provided.
 """
 
 import logging
@@ -198,6 +207,137 @@ class SignalScanner:
             suggested_size_usd=round(rebalance_usd, 2),
         )
 
+    def _bollinger_signal(
+        self,
+        symbol: str,
+        price: float,
+        bollinger_upper: float,
+        bollinger_lower: float,
+        sma_20: float,
+        obv_trend: Optional[float],
+        portfolio_value: float,
+    ) -> Optional[TradingSignal]:
+        """
+        Bollinger Band mean-reversion signal.
+
+        %B = (price − lower) / (upper − lower)  [Bollinger 1983]
+        %B < 0: price below lower band → oversold, contrarian BUY candidate.
+        %B > 1: price above upper band → overbought, potential SELL / trim.
+
+        OBV trend (Granville 1963) modulates strength:
+        + OBV on a BUY signal = volume accumulation confirms reversal.
+        − OBV on a BUY signal = distribution divergence, reduce confidence.
+        """
+        band_width = bollinger_upper - bollinger_lower
+        if band_width <= 0:
+            return None
+
+        pct_b = (price - bollinger_lower) / band_width
+
+        if pct_b < 0:
+            strength = min(1.0, 0.5 + abs(pct_b) * 2.0)
+            if obv_trend is not None:
+                strength = min(1.0, strength * (1.15 if obv_trend > 0 else 0.80))
+            size = portfolio_value * (0.015 + 0.01 * strength)
+            obv_note = " [OBV confirms accumulation]" if obv_trend and obv_trend > 0 else (
+                " [OBV divergence — caution]" if obv_trend and obv_trend < 0 else "")
+            return TradingSignal(
+                symbol=symbol,
+                signal_type="BOLLINGER_OVERSOLD",
+                direction="BUY",
+                strength=round(strength, 3),
+                price=price,
+                reasoning=(
+                    f"{symbol} %B={pct_b:.2f} — below lower Bollinger Band "
+                    f"(${bollinger_lower:.2f}, SMA20=${sma_20:.2f}) — "
+                    f"mean-reversion entry.{obv_note}"
+                ),
+                suggested_size_usd=round(size, 2),
+            )
+
+        if pct_b > 1:
+            strength = min(1.0, 0.5 + (pct_b - 1.0) * 2.0)
+            if obv_trend is not None and obv_trend < 0:
+                strength = min(1.0, strength * 1.15)
+            size = portfolio_value * 0.015
+            return TradingSignal(
+                symbol=symbol,
+                signal_type="BOLLINGER_OVERBOUGHT",
+                direction="SELL",
+                strength=round(strength, 3),
+                price=price,
+                reasoning=(
+                    f"{symbol} %B={pct_b:.2f} — above upper Bollinger Band "
+                    f"(${bollinger_upper:.2f}) — overbought trim signal."
+                ),
+                suggested_size_usd=round(size, 2),
+            )
+        return None
+
+    def _vwap_signal(
+        self,
+        symbol: str,
+        price: float,
+        vwap: float,
+        volume: float,
+        avg_volume: float,
+        obv_trend: Optional[float],
+        portfolio_value: float,
+    ) -> Optional[TradingSignal]:
+        """
+        VWAP institutional signal.
+
+        VWAP is the standard institutional execution benchmark (Berkowitz et al. 1988).
+        A close ≥1.2% above VWAP on ≥1.2× avg volume signals institutional buying.
+        A close ≥1.2% below VWAP on ≥1.2× avg volume signals institutional selling.
+
+        OBV trend confirmation adjusts strength: matching OBV direction = +15%,
+        conflicting OBV = −10%.
+        """
+        if vwap <= 0 or avg_volume <= 0:
+            return None
+
+        vol_ratio = volume / avg_volume
+        if vol_ratio < 1.2:
+            return None
+
+        deviation = (price - vwap) / vwap
+
+        if deviation >= 0.012:
+            strength = min(1.0, 0.4 + abs(deviation) * 12.0 + (vol_ratio - 1.2) * 0.15)
+            if obv_trend is not None:
+                strength = min(1.0, strength * (1.10 if obv_trend > 0 else 0.90))
+            return TradingSignal(
+                symbol=symbol,
+                signal_type="VWAP_BREAKOUT",
+                direction="BUY",
+                strength=round(strength, 3),
+                price=price,
+                reasoning=(
+                    f"{symbol} closed {deviation*100:.1f}% above VWAP (${vwap:.2f}) "
+                    f"on {vol_ratio:.1f}× avg volume — institutional buying confirmed."
+                ),
+                suggested_size_usd=round(portfolio_value * (0.02 + 0.01 * strength), 2),
+            )
+
+        if deviation <= -0.012:
+            strength = min(1.0, 0.4 + abs(deviation) * 12.0 + (vol_ratio - 1.2) * 0.15)
+            if obv_trend is not None:
+                strength = min(1.0, strength * (1.10 if obv_trend < 0 else 0.90))
+            return TradingSignal(
+                symbol=symbol,
+                signal_type="VWAP_BREAKDOWN",
+                direction="SELL",
+                strength=round(strength, 3),
+                price=price,
+                reasoning=(
+                    f"{symbol} closed {abs(deviation)*100:.1f}% below VWAP (${vwap:.2f}) "
+                    f"on {vol_ratio:.1f}× avg volume — institutional selling pressure."
+                ),
+                suggested_size_usd=round(portfolio_value * 0.015, 2),
+            )
+        return None
+
     def _earnings_drift(
         self,
         symbol: str,
@@ -302,6 +442,13 @@ class SignalScanner:
             earnings_date = md.get("earnings_date")
             target_weight = _safe_float(md.get("target_weight"), 0.0)
 
+            bollinger_upper = _safe_float(md.get("bollinger_upper"))
+            bollinger_lower = _safe_float(md.get("bollinger_lower"))
+            sma_20 = _safe_float(md.get("sma_20"), price)
+            obv_trend_raw = md.get("obv_trend")
+            obv_trend = float(obv_trend_raw) if obv_trend_raw is not None else None
+            vwap = _safe_float(md.get("vwap"))
+
             market_value = _safe_float(pos.get("market_value"))
             current_weight = market_value / total_position_value if total_position_value > 0 else 0.0
 
@@ -330,6 +477,24 @@ class SignalScanner:
             sig = self._earnings_drift(symbol, price, price_2d_ago, earnings_date, portfolio_value)
             if sig:
                 signals.append(sig)
+
+            # 6. Bollinger Band signals (requires bollinger_upper + bollinger_lower)
+            if bollinger_upper > 0 and bollinger_lower > 0:
+                sig = self._bollinger_signal(
+                    symbol, price, bollinger_upper, bollinger_lower,
+                    sma_20, obv_trend, portfolio_value
+                )
+                if sig:
+                    signals.append(sig)
+
+            # 7. VWAP institutional signals (requires vwap + volume data)
+            if vwap > 0 and avg_volume > 0 and current_volume > 0:
+                sig = self._vwap_signal(
+                    symbol, price, vwap, current_volume, avg_volume,
+                    obv_trend, portfolio_value
+                )
+                if sig:
+                    signals.append(sig)
 
         # Sort by strength descending
         signals.sort(key=lambda s: s.strength, reverse=True)

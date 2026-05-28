@@ -95,15 +95,21 @@ def _market_data_from_stocks(stocks) -> dict:
     md = {}
     for s in stocks:
         md[s.symbol] = {
-            "high_52w": s.high_52w,
-            "low_52w": s.low_52w,
-            "low_20d": s.low_20d,
-            "avg_volume": s.avg_volume,
+            "high_52w":       s.high_52w,
+            "low_52w":        s.low_52w,
+            "low_20d":        s.low_20d,
+            "avg_volume":     s.avg_volume,
             "current_volume": s.current_volume,
-            "prev_close": s.prev_close,
-            "price_2d_ago": s.price_2d_ago,
-            "earnings_date": s.earnings_date,
-            "target_weight": s.target_weight,
+            "prev_close":     s.prev_close,
+            "price_2d_ago":   s.price_2d_ago,
+            "earnings_date":  s.earnings_date,
+            "target_weight":  s.target_weight,
+            # Enhanced signal inputs (Bollinger, VWAP, OBV)
+            "sma_20":          s.sma_20,
+            "bollinger_upper": s.bollinger_upper,
+            "bollinger_lower": s.bollinger_lower,
+            "obv_trend":       s.obv_trend,
+            "vwap":            s.vwap,
         }
     return md
 
@@ -144,6 +150,12 @@ def render_risk(decisions, output=sys.stdout) -> None:
         print(line, file=output)
         for r in d.reasons:
             print(f"      - {r}", file=output)
+        if d.kelly_fraction is not None:
+            print(f"      - ½-Kelly fraction: {d.kelly_fraction*100:.2f}% of portfolio", file=output)
+        if d.var_95_usd is not None:
+            print(f"      - 1-day VaR (95%):  ${d.var_95_usd:,.2f}", file=output)
+        if d.cvar_95_usd is not None:
+            print(f"      - 1-day CVaR (95%): ${d.cvar_95_usd:,.2f}  (Expected Shortfall)", file=output)
 
     blocked = [d for d in decisions if not d.approved and d.side != "HOLD"]
     if blocked:

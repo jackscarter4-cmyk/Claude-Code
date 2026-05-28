@@ -86,8 +86,11 @@ def render_form(csv_text: str) -> str:
     return f"""
     <form method="POST" action="/analyze">
       <p class="sub">Paste your stock CSV below (or edit the example). Only
-      <code>symbol</code> and <code>price</code> are required — fill in what you
-      have. Get fundamentals from Yahoo Finance.</p>
+      <code>symbol</code> and <code>price</code> are required — fill in what you have.
+      Add <code>annual_volatility</code> (e.g. 0.25 = 25%) and <code>atr_14</code> to
+      unlock fractional Kelly sizing + VaR/CVaR. Add <code>bollinger_upper</code>,
+      <code>bollinger_lower</code>, <code>vwap</code> to unlock additional signals.
+      Get all values from Yahoo Finance or TradingView.</p>
       <textarea name="csv" spellcheck="false">{html.escape(csv_text)}</textarea>
       <br><button type="submit">Run analysis</button>
     </form>
@@ -167,7 +170,17 @@ def render_results(stocks) -> str:
             else:
                 head = f"<b>{d.side} {html.escape(d.symbol)}</b> · {d.shares:g} sh (${d.size_usd:,.0f})"
             reasons = "; ".join(html.escape(x) for x in d.reasons)
-            rec_html += f'<div class="rec">{head}<br><span class="muted">{reasons}</span></div>'
+            risk_tags = []
+            if d.kelly_fraction is not None:
+                risk_tags.append(f"½-Kelly {d.kelly_fraction*100:.1f}%")
+            if d.var_95_usd is not None:
+                risk_tags.append(f"VaR₉₅ ${d.var_95_usd:,.0f}/day")
+            if d.cvar_95_usd is not None:
+                risk_tags.append(f"CVaR₉₅ ${d.cvar_95_usd:,.0f}/day")
+            risk_line = (' <span class="muted">· ' + " · ".join(risk_tags) + '</span>'
+                         if risk_tags else "")
+            rec_html += (f'<div class="rec">{head}{risk_line}'
+                         f'<br><span class="muted">{reasons}</span></div>')
     else:
         rec_html = '<p class="muted">No actions pass risk checks right now.</p>'
 

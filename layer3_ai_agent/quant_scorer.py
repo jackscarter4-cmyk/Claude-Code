@@ -4,11 +4,17 @@ Layer 3 — Offline quantitative stock scorer.
 Replaces the Claude-based analyzer with a fully offline 5-factor model
 (Alpha Picks / Seeking Alpha Quant style). No API keys, no network.
 
-Each factor is scored 0-10 via z-score normalization across the universe
-of stocks you provide, then averaged into a composite score that drives a
-BUY / HOLD / SELL / AVOID verdict.
+Scoring methodology:
+  - Each factor is scored 0-10 via winsorized z-score normalization
+    (Fama-French / MSCI Barra USE4 standard: clip at 3σ before scoring).
+  - Factors: Value (HML-aligned), Growth (CMA-aligned), Profitability (RMW),
+    EPS Revisions (Chan, Jegadeesh & Lakonishok 1996), Price Momentum
+    (Jegadeesh & Titman 1993 — 12-1 month skip-month return).
+  - Composite is the equal-weighted average of available factor scores.
+  - Verdict: composite ≥ 6.5 → BUY, ≤ 3.5 → SELL/AVOID.
+    Red-flag cap: growth ≤ 3.0 OR momentum ≤ 3.0 blocks BUY regardless.
 
-Shared by both `daily_check.py` (CLI screener) and the offline engine.
+Shared by `daily_check.py` (CLI screener), `main.py`, and `serve.py` (web UI).
 """
 
 import math
@@ -25,32 +31,32 @@ class StockData:
     symbol: str
     price: float
 
-    # Valuation
+    # Valuation (maps to Fama-French HML factor)
     pe_ratio: Optional[float] = None
     forward_pe: Optional[float] = None
     pb_ratio: Optional[float] = None
     ev_ebitda: Optional[float] = None
 
-    # Growth
+    # Growth (maps to Fama-French CMA factor, inverted)
     revenue_growth_yoy: Optional[float] = None
     eps_growth_yoy: Optional[float] = None
     eps_growth_3y: Optional[float] = None
 
-    # Profitability
+    # Profitability (maps to Fama-French RMW factor)
     roe: Optional[float] = None
     roic: Optional[float] = None
     gross_margin: Optional[float] = None
     net_margin: Optional[float] = None
 
-    # EPS Revisions
+    # EPS Revisions (Chan, Jegadeesh & Lakonishok 1996)
     eps_rev_30d: Optional[float] = None
     eps_rev_60d: Optional[float] = None
     eps_rev_90d: Optional[float] = None
 
-    # Momentum
-    price_12m_ago: Optional[float] = None
-    price_1m_ago: Optional[float] = None
-    rsi_14: Optional[float] = None
+    # Momentum (Jegadeesh & Titman 1993 — 12-1 month skip-month)
+    price_12m_ago: Optional[float] = None   # price 12 months ago (formation start)
+    price_1m_ago: Optional[float] = None    # price 1 month ago (skip most recent month)
+    rsi_14: Optional[float] = None          # Wilder (1978) 14-day RSI
 
     # Context
     sector: Optional[str] = None
@@ -60,7 +66,7 @@ class StockData:
     shares_held: Optional[float] = None
     notes: Optional[str] = None
 
-    # Layer 2 signal inputs (all optional; signals are skipped when missing)
+    # Layer 2 signal inputs (basic — all optional)
     high_52w: Optional[float] = None
     low_52w: Optional[float] = None
     low_20d: Optional[float] = None
@@ -70,6 +76,18 @@ class StockData:
     price_2d_ago: Optional[float] = None
     earnings_date: Optional[str] = None
     target_weight: Optional[float] = None
+
+    # Risk quantification (enables Kelly Criterion + VaR in Layer 5)
+    annual_volatility: Optional[float] = None  # annualized σ, e.g. 0.25 = 25%
+    beta: Optional[float] = None               # market beta vs S&P 500
+    atr_14: Optional[float] = None             # 14-day Average True Range ($ per share)
+
+    # Enhanced Layer 2 signals (Bollinger Bands, VWAP, OBV)
+    sma_20: Optional[float] = None             # 20-day simple moving average
+    bollinger_upper: Optional[float] = None    # SMA_20 + 2σ_20 upper band
+    bollinger_lower: Optional[float] = None    # SMA_20 − 2σ_20 lower band
+    obv_trend: Optional[float] = None         # OBV slope: + = accumulation, − = distribution
+    vwap: Optional[float] = None              # session VWAP (institutional reference price)
 
 
 @dataclass
@@ -85,7 +103,7 @@ class ScoreResult:
     score_momentum: Optional[float] = None
     composite: Optional[float] = None
 
-    # Sub-metrics stored for report detail
+    # Sub-metrics for report detail
     momentum_12_1: Optional[float] = None
     rsi_14: Optional[float] = None
     roe: Optional[float] = None
@@ -96,6 +114,10 @@ class ScoreResult:
     cost_basis: Optional[float] = None
     shares_held: Optional[float] = None
     notes: Optional[str] = None
+
+    # Passed through for Layer 5 risk sizing (Kelly + VaR)
+    annual_volatility: Optional[float] = None
+    atr_14: Optional[float] = None
 
     verdict: str = "HOLD"
     confidence: str = "LOW"
@@ -109,19 +131,22 @@ class QuantScorer:
     """
     Implements the Alpha Picks / Seeking Alpha Quant style 5-factor framework.
 
-    Each factor is scored 0-10 using z-score normalization across the
-    provided universe, then clipped to [0, 10].
+    Each factor is scored 0-10 using winsorized z-score normalization:
+      1. Clip values at μ ± 3σ (MSCI Barra USE4 / Fama-French standard).
+         This prevents a single extreme outlier (e.g. a negative P/E) from
+         compressing every other stock's score.
+      2. Recompute μ and σ on the winsorized universe.
+      3. Map z-score to [0, 10]: z=-3 → 0, z=0 → 5, z=+3 → 10.
 
-    Formula reference:
-      - Value:         lower P/E, P/B, EV/EBITDA relative to peers = higher score
-      - Growth:        higher revenue/EPS growth = higher score
-      - Profitability: higher ROE, ROIC, gross/net margin = higher score
-      - EPS Revisions: positive estimate revisions over 30/60/90d = higher score
-      - Momentum:      12-1 month price return + RSI = higher score
+    Factors align with Fama-French 5-factor terminology:
+      Value         → HML (Book-to-Market proxy)
+      Growth        → CMA-inverted (asset growth proxy)
+      Profitability → RMW (operating profitability proxy)
+      EPS Revisions → Chan, Jegadeesh & Lakonishok (1996) revision signal
+      Momentum      → Jegadeesh & Titman (1993) 12-1 month cross-sectional rank
     """
 
     def _safe(self, values: list) -> list:
-        """Filter out None values."""
         return [v for v in values if v is not None]
 
     def _mean(self, values: list) -> float:
@@ -138,15 +163,25 @@ class QuantScorer:
 
     def _zscore_to_score(self, value: float, universe: list, invert: bool = False) -> float:
         """
-        Convert a raw metric to a 0-10 score via z-score normalization.
-        invert=True for metrics where lower = better (e.g. P/E ratio).
+        0-10 score via winsorized z-score normalization.
+
+        Winsorizes at 3σ (MSCI Barra USE4 standard) before computing z to
+        prevent extreme outliers from distorting peer comparisons.
+        invert=True for metrics where lower is better (P/E, P/B, EV/EBITDA).
         """
         u = self._safe(universe)
         if not u:
             return 5.0
         mu = self._mean(u)
         sigma = self._std(u)
-        z = (value - mu) / sigma
+        # Winsorize at 3σ
+        lo, hi = mu - 3.0 * sigma, mu + 3.0 * sigma
+        value_w = max(lo, min(hi, value))
+        u_w = [max(lo, min(hi, x)) for x in u]
+        # Recompute on winsorized universe
+        mu_w = self._mean(u_w)
+        sigma_w = self._std(u_w)
+        z = (value_w - mu_w) / sigma_w
         if invert:
             z = -z
         # Map z-score to 0-10: z=-3 → 0, z=0 → 5, z=+3 → 10
@@ -334,6 +369,8 @@ class QuantScorer:
                 cost_basis=stock.cost_basis,
                 shares_held=stock.shares_held,
                 notes=stock.notes,
+                annual_volatility=stock.annual_volatility,
+                atr_14=stock.atr_14,
                 verdict=verdict,
                 confidence=confidence,
             ))
