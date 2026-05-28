@@ -21,6 +21,22 @@ USAGE
   # Interactive wizard (enter one stock at a time):
   python daily_check.py --wizard
 
+WEBULL IMPORT
+-------------
+Webull gives you positions (symbol, price, cost basis, shares) but NOT
+fundamentals (P/E, ROE, EPS revisions). So the flow is two steps: import
+your holdings, then fill in fundamentals from Yahoo Finance.
+
+  # From a Webull positions JSON dump (unofficial API or OpenAPI shape):
+  python daily_check.py --webull-json positions.json --export my_stocks.csv
+
+  # From a Webull order-history CSV export (Account -> History -> Export):
+  python daily_check.py --webull-csv webull_orders.csv --export my_stocks.csv
+
+Then open my_stocks.csv, fill in the fundamental columns from Yahoo Finance,
+and score it:
+  python daily_check.py --input my_stocks.csv
+
 INPUT CSV COLUMNS
 -----------------
 Required: symbol, price
@@ -478,6 +494,225 @@ def load_json(path: str) -> list[StockData]:
     return stocks
 
 
+# ---------------------------------------------------------------------------
+# Webull import
+# ---------------------------------------------------------------------------
+# Webull does not export a clean holdings CSV and does not expose fundamentals
+# (P/E, ROE, EPS revisions, etc.). These loaders pull what Webull DOES provide
+# — symbol, current price, cost basis, share count — so you only have to fill
+# in fundamentals (from Yahoo Finance) before scoring.
+
+def _wb_num(val) -> Optional[float]:
+    """Coerce a Webull field (often a string) to float."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    return _parse_float(str(val))
+
+
+def _extract_positions(blob) -> list:
+    """Pull the list of position dicts out of various Webull payload shapes."""
+    if isinstance(blob, list):
+        return blob
+    if isinstance(blob, dict):
+        for key in ("positions", "holdings", "items", "data"):
+            inner = blob.get(key)
+            if isinstance(inner, list):
+                return inner
+            if isinstance(inner, dict):
+                # OpenAPI sometimes nests one more level: data -> positions
+                for k2 in ("positions", "holdings", "items"):
+                    if isinstance(inner.get(k2), list):
+                        return inner[k2]
+    return []
+
+
+def load_webull_positions_json(path: str) -> list[StockData]:
+    """
+    Load current holdings from a Webull positions JSON dump.
+
+    Handles both the unofficial `webull` package shape (ticker is a nested
+    object, share count under "position") and the official OpenAPI shape
+    (flat "symbol"/"quantity"). Accepts a bare list, a full account blob,
+    or a {"data": {...}} wrapper.
+    """
+    with open(path, encoding="utf-8") as f:
+        blob = json.load(f)
+
+    positions = _extract_positions(blob)
+    stocks = []
+    for pos in positions:
+        if not isinstance(pos, dict):
+            continue
+
+        # Symbol: flat field, or nested ticker object
+        symbol = pos.get("symbol") or pos.get("disSymbol")
+        ticker = pos.get("ticker")
+        if not symbol and isinstance(ticker, dict):
+            symbol = ticker.get("symbol") or ticker.get("disSymbol")
+        if not symbol and isinstance(ticker, str):
+            symbol = ticker
+        if not symbol:
+            continue
+        symbol = str(symbol).strip().upper()
+
+        shares = _wb_num(pos.get("position")) or _wb_num(pos.get("quantity"))
+        cost_basis = (
+            _wb_num(pos.get("costPrice"))
+            or _wb_num(pos.get("cost"))
+            or _wb_num(pos.get("unitCostPrice"))
+        )
+        price = _wb_num(pos.get("lastPrice"))
+        market_value = _wb_num(pos.get("marketValue"))
+        if price is None and market_value and shares:
+            price = round(market_value / shares, 4)
+        # Last resort: fall back to cost basis so the row is at least scorable
+        if price is None:
+            price = cost_basis or 0.0
+
+        sector = pos.get("sector")
+        if not sector and isinstance(ticker, dict):
+            sector = ticker.get("sector")
+
+        pnl = pos.get("unrealizedProfitLossRate")
+        note = None
+        if pnl is not None:
+            rate = _wb_num(pnl)
+            if rate is not None:
+                # Webull gives this as a decimal (0.123 = +12.3%)
+                note = f"Webull unrealized P&L: {rate * 100:+.1f}%"
+
+        stocks.append(StockData(
+            symbol=symbol,
+            price=price or 0.0,
+            cost_basis=cost_basis,
+            shares_held=shares,
+            sector=sector,
+            notes=note,
+        ))
+    return stocks
+
+
+# Webull order-history CSV uses these column headers (varies by export source)
+_WB_COL_SYMBOL = ("symbol", "ticker")
+_WB_COL_SIDE = ("side", "action", "buy/sell")
+_WB_COL_STATUS = ("status", "state")
+_WB_COL_QTY = ("filled", "filled qty", "qty", "quantity", "total qty", "shares")
+_WB_COL_PRICE = ("avg price", "average fill price", "avg fill price", "filled price", "price")
+_WB_COL_TIME = ("filled time", "placed time", "time", "date")
+
+
+def _find_col(fieldnames: list, candidates: tuple) -> Optional[str]:
+    """Case-insensitive lookup of the first matching column name."""
+    lower = {fn.lower().strip(): fn for fn in fieldnames if fn}
+    for cand in candidates:
+        if cand in lower:
+            return lower[cand]
+    return None
+
+
+def load_webull_orders_csv(path: str) -> list[StockData]:
+    """
+    Reconstruct current holdings from a Webull order/transaction-history CSV.
+
+    Processes filled BUY/SELL orders chronologically, maintaining a running
+    share count and weighted-average cost per symbol. The result is your net
+    open position with its blended cost basis — fundamentals are left blank.
+
+    Note: the export has no "current price" column, so price is set to the
+    most recent fill price as a placeholder. Update it before scoring.
+    """
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        fieldnames = reader.fieldnames or []
+
+    col_sym = _find_col(fieldnames, _WB_COL_SYMBOL)
+    col_side = _find_col(fieldnames, _WB_COL_SIDE)
+    col_status = _find_col(fieldnames, _WB_COL_STATUS)
+    col_qty = _find_col(fieldnames, _WB_COL_QTY)
+    col_price = _find_col(fieldnames, _WB_COL_PRICE)
+    col_time = _find_col(fieldnames, _WB_COL_TIME)
+
+    if not col_sym or not col_qty or not col_price:
+        raise ValueError(
+            "Could not find Symbol / Qty / Price columns in the Webull CSV. "
+            f"Found columns: {fieldnames}"
+        )
+
+    # Sort oldest-first so cost averaging is correct (Webull exports newest-first)
+    if col_time:
+        rows.sort(key=lambda r: r.get(col_time) or "")
+
+    # symbol -> {shares, avg_cost, last_price}
+    book: dict = {}
+    for row in rows:
+        # Only count executed fills
+        if col_status:
+            status = (row.get(col_status) or "").strip().lower()
+            if status and "filled" not in status and "executed" not in status:
+                continue
+
+        symbol = (row.get(col_sym) or "").strip().upper()
+        if not symbol:
+            continue
+        qty = _parse_float(row.get(col_qty))
+        price = _parse_float(row.get(col_price))
+        if not qty or qty <= 0 or price is None:
+            continue
+
+        side = (row.get(col_side) or "buy").strip().lower()
+        is_sell = side.startswith("s")  # "sell", "sold"
+
+        b = book.setdefault(symbol, {"shares": 0.0, "avg_cost": 0.0, "last_price": price})
+        b["last_price"] = price
+
+        if is_sell:
+            b["shares"] = max(0.0, b["shares"] - qty)
+            if b["shares"] == 0.0:
+                b["avg_cost"] = 0.0
+        else:
+            prev_shares = b["shares"]
+            new_shares = prev_shares + qty
+            b["avg_cost"] = (
+                (prev_shares * b["avg_cost"] + qty * price) / new_shares
+                if new_shares > 0 else 0.0
+            )
+            b["shares"] = new_shares
+
+    stocks = []
+    for symbol, b in book.items():
+        if b["shares"] <= 0:
+            continue  # fully closed — no open position
+        stocks.append(StockData(
+            symbol=symbol,
+            price=round(b["last_price"], 4),
+            cost_basis=round(b["avg_cost"], 4) if b["avg_cost"] else None,
+            shares_held=round(b["shares"], 6),
+            notes="Imported from Webull orders — price is last fill, update before scoring",
+        ))
+    return stocks
+
+
+def write_screener_csv(stocks: list[StockData], path: str) -> None:
+    """Write StockData rows to a screener CSV using the standard column order."""
+    columns = [
+        "symbol", "price", "pe_ratio", "forward_pe", "pb_ratio", "ev_ebitda",
+        "revenue_growth_yoy", "eps_growth_yoy", "eps_growth_3y",
+        "roe", "roic", "gross_margin", "net_margin",
+        "eps_rev_30d", "eps_rev_60d", "eps_rev_90d",
+        "price_12m_ago", "price_1m_ago", "rsi_14",
+        "sector", "market_cap_b", "dividend_yield", "cost_basis", "shares_held", "notes",
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(columns)
+        for s in stocks:
+            d = asdict(s)
+            writer.writerow(["" if d.get(c) is None else d.get(c) for c in columns])
+
+
 def wizard() -> list[StockData]:
     """Interactive one-stock-at-a-time entry."""
     print("\n=== Stock Entry Wizard ===")
@@ -729,7 +964,10 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument("--input", "-i", help="Path to CSV or JSON input file")
+    parser.add_argument("--webull-json", help="Import holdings from a Webull positions JSON dump")
+    parser.add_argument("--webull-csv", help="Import holdings from a Webull order-history CSV export")
     parser.add_argument("--output", "-o", help="Save report to this file (default: stdout)")
+    parser.add_argument("--export", help="Write an enriched screener CSV (fill in fundamentals) instead of scoring")
     parser.add_argument("--wizard", "-w", action="store_true", help="Interactive data entry wizard")
     parser.add_argument("--template", "-t", action="store_true", help="Print a template CSV/JSON and exit")
     parser.add_argument("--json-template", action="store_true", help="Print a JSON template and exit")
@@ -749,6 +987,10 @@ def main():
 
     if args.wizard:
         stocks = wizard()
+    elif args.webull_json:
+        stocks = load_webull_positions_json(args.webull_json)
+    elif args.webull_csv:
+        stocks = load_webull_orders_csv(args.webull_csv)
     elif args.input:
         if args.input.endswith(".json"):
             stocks = load_json(args.input)
@@ -756,12 +998,20 @@ def main():
             stocks = load_csv(args.input)
     else:
         parser.print_help()
-        print("\nError: provide --input <file>, --wizard, or --template")
+        print("\nError: provide --input <file>, --webull-json, --webull-csv, --wizard, or --template")
         sys.exit(1)
 
     if not stocks:
         print("No stocks loaded. Check your input file.")
         sys.exit(1)
+
+    # Webull import path: write an enriched screener CSV for you to add fundamentals.
+    if args.export:
+        write_screener_csv(stocks, args.export)
+        print(f"Wrote {len(stocks)} holdings to {args.export}")
+        print("Fill in the fundamentals columns (P/E, ROE, growth, etc.) from")
+        print("Yahoo Finance, then run: python daily_check.py --input " + args.export)
+        return
 
     scorer = QuantScorer()
     results = scorer.score(stocks)
