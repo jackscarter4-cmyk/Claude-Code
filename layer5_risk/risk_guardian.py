@@ -1,18 +1,17 @@
 """
-Layer 5 — Risk Management and Portfolio Oversight.
+Layer 5 — Risk Management and Portfolio Oversight for stocks.
 
-This layer wraps around all trading layers and enforces hard limits
-that CANNOT be overridden by trading logic:
+Enforces hard limits that CANNOT be overridden by trading logic:
+  1. Market hours enforcement (no trading outside allowed windows)
+  2. Max total capital deployed
+  3. Max single-stock exposure (8% of portfolio)
+  4. Daily loss limit -> halt + alert
+  5. Sector concentration limit (40% max in any one sector)
+  6. Automatic profit-taking
+  7. Anomaly detection
 
-  1. Max total capital deployed
-  2. Max single-market exposure
-  3. Daily loss limit → halt + alert
-  4. Correlation limits (multiple positions on same underlying)
-  5. Automatic profit-taking
-  6. Anomaly detection (price data outages, flash crashes)
-
-All checks are synchronous at decision time. The guardian is
-the last gate before any order hits the exchange.
+All pre-trade checks are async and are the last gate before an order
+reaches the broker.
 """
 
 import asyncio
@@ -23,54 +22,91 @@ from typing import Optional
 
 from config.settings import config
 from layer1_data.database import Database
-from utils.polymarket_client import PolymarketClient
+from utils.broker_client import BrokerClient
 
 logger = logging.getLogger(__name__)
 
 
+def market_is_open() -> bool:
+    """Return True between 9:30am and 4:00pm ET on weekdays (Mon-Fri).
+    Uses 13:30-20:00 UTC as the combined EST/EDT window."""
+    now = datetime.now(timezone.utc)
+    if now.weekday() >= 5:
+        return False
+    hour, minute = now.hour, now.minute
+    after_open = (hour > 13) or (hour == 13 and minute >= 30)
+    before_close = hour < 20
+    return after_open and before_close
+
+
+def _is_premarket() -> bool:
+    """Return True during pre-market hours (4:00am - 9:30am ET = 08:00 - 13:30 UTC)."""
+    now = datetime.now(timezone.utc)
+    if now.weekday() >= 5:
+        return False
+    hour, minute = now.hour, now.minute
+    after_premarket_open = hour >= 8
+    before_market_open = (hour < 13) or (hour == 13 and minute < 30)
+    return after_premarket_open and before_market_open
+
+
 class RiskGuardian:
     """
-    Enforces all portfolio-level risk limits.
+    Enforces all portfolio-level risk limits for stock trading.
 
-    Injected into Layer 2 and Layer 3 as a pre-trade check.
-    Also runs an independent monitoring loop for post-trade oversight.
+    Injected into Layer 2 (SignalTrader) and Layer 3 (AITradingAgent)
+    as a pre-trade check.  Also runs an independent monitoring loop.
     """
 
-    def __init__(self, db: Database, client: PolymarketClient, alert_system=None):
+    def __init__(self, db: Database, broker: BrokerClient, alert_system=None):
         self.db = db
-        self.client = client
+        self.broker = broker
         self.alert = alert_system
 
-        # Track daily PnL for the loss-limit
-        self._daily_start_balance: float = 0.0
+        self._daily_start_value: float = 0.0
         self._current_day: date = date.today()
         self._halted: bool = False
 
-        # Correlation tracking: topic_key -> list of market_ids
-        self._correlated_groups: dict[str, list[str]] = defaultdict(list)
+        # Sector exposure tracking: sector -> total market value
+        self._sector_exposure: dict = defaultdict(float)
+
+    # ------------------------------------------------------------------
+    # Market hours helpers (public API)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def market_is_open() -> bool:
+        """Public accessor for market hours check."""
+        return market_is_open()
 
     # ------------------------------------------------------------------
     # Pre-trade checks
     # ------------------------------------------------------------------
 
-    async def check_layer2_trade(self, opportunity) -> bool:
-        """Check if a Layer 2 market-making trade is permitted."""
+    async def check_signal_trade(self, signal) -> bool:
+        """Check if a Layer 2 signal trade is permitted."""
         if self._halted:
-            logger.warning("Trading halted — blocking Layer 2 trade")
+            logger.warning("Trading halted — blocking Layer 2 signal trade")
             return False
 
-        # Check position count
+        # Signal trades require the market to be open (market orders only)
+        if not market_is_open():
+            logger.debug("Market closed — blocking Layer 2 signal trade")
+            return False
+
+        # Max open positions
         open_trades = self.db.get_open_trades()
         l2_trades = [t for t in open_trades if t.get("layer") == "layer2"]
-        if len(l2_trades) >= config.market_making.max_mm_positions:
-            logger.debug("Max MM positions reached (%d)", len(l2_trades))
+        if len(l2_trades) >= config.risk.max_open_positions:
+            logger.info("Max open positions reached (%d)", len(l2_trades))
             return False
 
-        # Check total exposure
-        balance = await self.client.get_balance()
-        if balance > 0:
-            total_exposed = sum(float(t.get("size_usdc", 0)) for t in open_trades)
-            max_exposed = balance * config.risk.max_deployed_fraction
+        # Total exposure check
+        account = await self.broker.get_account()
+        portfolio_value = account.get("portfolio_value", 0.0)
+        if portfolio_value > 0:
+            total_exposed = sum(float(t.get("size_usd", 0)) for t in open_trades)
+            max_exposed = portfolio_value * config.risk.max_deployed_fraction
             if total_exposed >= max_exposed:
                 logger.info(
                     "Max exposure reached: $%.2f / $%.2f", total_exposed, max_exposed
@@ -79,68 +115,90 @@ class RiskGuardian:
 
         return True
 
-    async def check_layer3_trade(self, analysis) -> bool:
-        """Check if a Layer 3 directional trade is permitted."""
+    async def check_ai_trade(self, analysis) -> bool:
+        """Check if a Layer 3 AI directional trade is permitted."""
         if self._halted:
-            logger.warning("Trading halted — blocking Layer 3 trade")
+            logger.warning("Trading halted — blocking Layer 3 AI trade")
+            return False
+
+        # Layer 3 limit orders may execute in pre-market; market orders need open market
+        order_side = getattr(analysis, "suggested_action", "BUY")
+        if not market_is_open() and not _is_premarket():
+            logger.debug("Outside trading window — blocking Layer 3 trade")
             return False
 
         open_trades = self.db.get_open_trades()
         l3_trades = [t for t in open_trades if t.get("layer") == "layer3"]
 
-        # Max open positions
         if len(l3_trades) >= config.risk.max_open_positions:
             logger.info("Max open positions reached (%d)", len(l3_trades))
             return False
 
-        # Single-market exposure
-        balance = await self.client.get_balance()
-        if balance > 0:
-            market_exposure = sum(
-                float(t.get("size_usdc", 0))
+        # Single-stock exposure check
+        account = await self.broker.get_account()
+        portfolio_value = account.get("portfolio_value", 0.0)
+        if portfolio_value > 0:
+            symbol = analysis.symbol
+            symbol_exposure = sum(
+                float(t.get("size_usd", 0))
                 for t in l3_trades
-                if t.get("market_id") == analysis.market_id
+                if t.get("symbol") == symbol
             )
-            max_market = balance * config.risk.max_single_market_fraction
-            if market_exposure + analysis.recommended_size_usdc > max_market:
+            max_symbol = portfolio_value * config.risk.max_single_stock_fraction
+            # Confidence-based size: HIGH=5%, MEDIUM=3%
+            trade_size = portfolio_value * (
+                0.05 if analysis.confidence == "HIGH" else 0.03
+            )
+            if symbol_exposure + trade_size > max_symbol:
                 logger.info(
-                    "Single-market cap hit for %s: $%.2f + $%.2f > $%.2f",
-                    analysis.market_id[:8],
-                    market_exposure,
-                    analysis.recommended_size_usdc,
-                    max_market,
+                    "Single-stock cap hit for %s: $%.2f + $%.2f > $%.2f",
+                    symbol, symbol_exposure, trade_size, max_symbol,
                 )
                 return False
 
-        # Correlation check
-        if not self._check_correlation(analysis.market_id, analysis.question):
-            logger.info("Correlation limit hit — blocking %s", analysis.market_id[:8])
+        # Sector concentration check
+        if not await self._check_sector_concentration(analysis):
+            logger.info(
+                "Sector concentration limit hit — blocking %s", analysis.symbol
+            )
             return False
 
         return True
 
-    def _check_correlation(self, market_id: str, question: str) -> bool:
+    async def _check_sector_concentration(self, analysis) -> bool:
         """
-        Detect if this market is too correlated with existing positions.
-
-        Uses keyword clustering: markets sharing high-frequency keywords
-        (trump, fed, btc, etc.) are considered correlated.
+        Ensure no single sector exceeds max_sector_concentration (default 40%)
+        of the total portfolio value after the proposed trade.
         """
-        CORRELATION_KEYWORDS = [
-            "trump", "biden", "harris", "fed", "federal reserve",
-            "bitcoin", "btc", "ethereum", "eth", "crypto",
-            "election", "senate", "house", "supreme court",
-            "ukraine", "russia", "china", "taiwan",
-        ]
+        watchlist_entry = self.db.get_watchlist_entry(analysis.symbol)
+        sector = (watchlist_entry or {}).get("sector")
+        if not sector:
+            return True  # Unknown sector — allow through
 
-        question_lower = question.lower()
-        for keyword in CORRELATION_KEYWORDS:
-            if keyword in question_lower:
-                group = self._correlated_groups[keyword]
-                if market_id not in group:
-                    if len(group) >= config.risk.max_correlated_positions:
-                        return False
-                    group.append(market_id)
+        account = await self.broker.get_account()
+        portfolio_value = account.get("portfolio_value", 1.0)
+
+        positions = await self.broker.get_positions()
+        sector_value = 0.0
+        for pos in positions:
+            sym = pos.get("symbol", "")
+            entry = self.db.get_watchlist_entry(sym)
+            if entry and entry.get("sector") == sector:
+                sector_value += float(pos.get("market_value", 0))
+
+        # Add the proposed trade
+        trade_size = portfolio_value * (
+            0.05 if analysis.confidence == "HIGH" else 0.03
+        )
+        projected_sector_pct = (sector_value + trade_size) / portfolio_value
+        if projected_sector_pct > config.risk.max_sector_concentration:
+            logger.info(
+                "Sector '%s' concentration would reach %.1f%% (limit %.1f%%)",
+                sector,
+                projected_sector_pct * 100,
+                config.risk.max_sector_concentration * 100,
+            )
+            return False
         return True
 
     # ------------------------------------------------------------------
@@ -148,29 +206,37 @@ class RiskGuardian:
     # ------------------------------------------------------------------
 
     async def _check_daily_loss_limit(self):
-        """Compare today's PnL against the daily loss limit."""
+        """Compare today's portfolio value against the daily loss limit."""
         today = date.today()
         if today != self._current_day:
-            # New day — reset
             self._current_day = today
-            self._daily_start_balance = await self.client.get_balance()
+            account = await self.broker.get_account()
+            self._daily_start_value = account.get("portfolio_value", 0.0)
             self._halted = False
-            logger.info("New trading day — balance reset to $%.2f", self._daily_start_balance)
+            logger.info(
+                "New trading day — portfolio value reset to $%.2f",
+                self._daily_start_value,
+            )
             return
 
-        current_balance = await self.client.get_balance()
-        if self._daily_start_balance == 0:
-            self._daily_start_balance = current_balance
+        account = await self.broker.get_account()
+        current_value = account.get("portfolio_value", 0.0)
+
+        if self._daily_start_value == 0:
+            self._daily_start_value = current_value
             return
 
-        daily_loss = self._daily_start_balance - current_balance
-        daily_loss_pct = daily_loss / self._daily_start_balance if self._daily_start_balance > 0 else 0
+        daily_loss = self._daily_start_value - current_value
+        daily_loss_pct = (
+            daily_loss / self._daily_start_value
+            if self._daily_start_value > 0
+            else 0
+        )
 
         if daily_loss_pct >= config.risk.daily_loss_limit_fraction:
             logger.error(
                 "DAILY LOSS LIMIT HIT: lost $%.2f (%.1f%%) — HALTING ALL TRADING",
-                daily_loss,
-                daily_loss_pct * 100,
+                daily_loss, daily_loss_pct * 100,
             )
             self._halted = True
             if self.alert:
@@ -180,59 +246,75 @@ class RiskGuardian:
                 )
 
     async def _auto_profit_take(self):
-        """Close positions that have reached the profit-taking target."""
+        """
+        Close Layer 3 positions that have reached the profit-taking target
+        (default: +25% from entry).
+        """
         open_trades = self.db.get_open_trades()
+        positions = await self.broker.get_positions()
+        pos_by_symbol = {p["symbol"]: p for p in positions}
+
         for trade in open_trades:
             if trade.get("layer") != "layer3":
                 continue
-            token_id = trade.get("token_id", "")
+            symbol = trade.get("symbol", "")
             entry_price = float(trade.get("price", 0))
-            if not token_id or entry_price == 0:
+            if not symbol or entry_price <= 0:
                 continue
 
-            current_price = await self.client.get_midpoint_price(token_id)
-            if current_price is None:
+            pos = pos_by_symbol.get(symbol)
+            if not pos:
+                continue
+
+            current_price = float(pos.get("current_price", 0))
+            if current_price <= 0:
                 continue
 
             return_pct = (current_price - entry_price) / entry_price
             if return_pct >= config.risk.profit_take_return:
                 logger.info(
-                    "Profit-taking on trade %s: return=%.1f%%",
-                    trade.get("id"),
-                    return_pct * 100,
+                    "Profit-taking on %s: return=%.1f%%", symbol, return_pct * 100
                 )
-                # Place a SELL order at current market price
-                size = float(trade.get("size_usdc", 0))
-                await self.client.place_limit_order(token_id, "SELL", current_price, size)
-                pnl = size * return_pct
-                self.db.update_trade_outcome(trade["id"], pnl, "WIN")
+                qty = float(pos.get("qty", 0))
+                if qty > 0:
+                    await self.broker.place_market_order(symbol, qty, "sell")
+                    pnl = float(trade.get("size_usd", 0)) * return_pct
+                    self.db.update_trade_outcome(trade["id"], pnl, "WIN")
 
-    async def _check_anomalies(self):
-        """
-        Detect platform-level anomalies (e.g., all prices simultaneously
-        jumping to extremes — possible data issue or platform outage).
-        """
-        markets = self.db.get_active_markets()[:20]  # sample check
-        extreme_count = 0
-        for market in markets:
-            ticks = self.db.get_recent_prices(market["id"], limit=5)
-            if ticks:
-                recent = [float(t["price"]) for t in ticks]
-                if any(p < 0.01 or p > 0.99 for p in recent):
-                    extreme_count += 1
+    async def _check_stop_losses(self):
+        """Close positions that have fallen below their stop-loss price."""
+        open_trades = self.db.get_open_trades()
+        positions = await self.broker.get_positions()
+        pos_by_symbol = {p["symbol"]: p for p in positions}
 
-        if extreme_count > len(markets) * 0.5 and len(markets) > 5:
-            logger.warning(
-                "ANOMALY: %d/%d markets showing extreme prices — possible data issue",
-                extreme_count,
-                len(markets),
-            )
-            self._halted = True
-            if self.alert:
-                await self.alert.send(
-                    f"WARNING: {extreme_count}/{len(markets)} markets at extreme prices. "
-                    "Trading paused for investigation."
+        for trade in open_trades:
+            stop_loss = trade.get("stop_loss")
+            if stop_loss is None:
+                continue
+            symbol = trade.get("symbol", "")
+            pos = pos_by_symbol.get(symbol)
+            if not pos:
+                continue
+
+            current_price = float(pos.get("current_price", 0))
+            if current_price > 0 and current_price <= float(stop_loss):
+                logger.warning(
+                    "STOP LOSS triggered for %s: current=$%.2f stop=$%.2f",
+                    symbol, current_price, float(stop_loss),
                 )
+                qty = float(pos.get("qty", 0))
+                if qty > 0:
+                    await self.broker.place_market_order(symbol, qty, "sell")
+                    entry = float(trade.get("price", current_price))
+                    pnl = float(trade.get("size_usd", 0)) * (
+                        (current_price - entry) / entry
+                    )
+                    self.db.update_trade_outcome(trade["id"], pnl, "LOSS")
+                    if self.alert:
+                        await self.alert.send(
+                            f"Stop loss triggered: sold {symbol} at ${current_price:.2f} "
+                            f"(entry=${entry:.2f}, loss=${pnl:.2f})"
+                        )
 
     # ------------------------------------------------------------------
     # Main monitoring loop
@@ -240,17 +322,19 @@ class RiskGuardian:
 
     async def run_forever(self, interval: int = 60):
         """Run risk monitoring checks every `interval` seconds."""
-        # Initialize starting balance
-        self._daily_start_balance = await self.client.get_balance()
+        account = await self.broker.get_account()
+        self._daily_start_value = account.get("portfolio_value", 0.0)
         logger.info(
-            "Risk guardian started. Opening balance: $%.2f", self._daily_start_balance
+            "Risk guardian started. Opening portfolio value: $%.2f",
+            self._daily_start_value,
         )
 
         while True:
             try:
                 await self._check_daily_loss_limit()
-                await self._auto_profit_take()
-                await self._check_anomalies()
+                if market_is_open():
+                    await self._auto_profit_take()
+                    await self._check_stop_losses()
             except Exception as exc:
                 logger.error("Risk monitor error: %s", exc)
             await asyncio.sleep(interval)

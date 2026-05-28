@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Autonomous Prediction Market Trading Engine
-==========================================
+Autonomous Stock Trading Engine
+================================
 
 Starts all 6 layers concurrently:
 
-  Layer 1  — Data ingestion (WebSocket, RSS, Twitter, events)
-  Layer 2  — Market-making (arbitrage on binary markets)
-  Layer 3  — AI directional trading agent (Claude API)
+  Layer 1  — Data ingestion (Alpaca WebSocket, RSS, Twitter, Reddit)
+  Layer 2  — Rule-based signal trader (momentum, volume, rebalance signals)
+  Layer 3  — AI stock analysis agent (Claude API, 5-factor quant framework)
   Layer 4  — Sentiment and hype detection
   Layer 5  — Risk management and portfolio oversight
-  Layer 6  — Self-improvement loop
+  Layer 6  — Self-improvement loop (weekly performance review)
 
 Usage:
     python main.py [--layers 1,2,3,4,5,6]
@@ -62,10 +62,10 @@ async def main(layers: set[int]):
     from config.settings import config
     from layer1_data.database import Database
     from layer5_risk.alert_system import AlertSystem
-    from utils.polymarket_client import PolymarketClient
+    from utils.broker_client import BrokerClient
 
     db = Database()
-    client = PolymarketClient()
+    client = BrokerClient()
     alert = AlertSystem()
 
     tasks = []
@@ -113,8 +113,8 @@ async def main(layers: set[int]):
     # Layer 2 — Market making
     # ----------------------------------------------------------------
     if 2 in layers:
-        from layer2_market_making.market_maker import MarketMaker
-        market_maker = MarketMaker(db, client, risk_guardian)
+        from layer2_market_making.market_maker import SignalTrader
+        market_maker = SignalTrader(db, client, risk_guardian)
         tasks.append(
             asyncio.create_task(market_maker.run_forever(), name="layer2_mm")
         )

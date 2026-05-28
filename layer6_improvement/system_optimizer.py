@@ -1,10 +1,10 @@
 """
-Layer 6 — Self-improvement loop.
+Layer 6 — Self-improvement loop for the stock trading engine.
 
 Periodically reviews performance statistics and uses Claude to generate
-updated guidance for the Layer 3 AI agent's system prompt.
+updated guidance for the Layer 3 AI stock analysis agent's system prompt.
 
-This is not fine-tuning — it's prompt engineering via feedback loops.
+This is prompt engineering via feedback loops, not fine-tuning.
 The updated prompt is written to a file that Layer 3 reads at startup.
 """
 
@@ -23,45 +23,47 @@ from layer6_improvement.performance_tracker import PerformanceTracker
 logger = logging.getLogger(__name__)
 
 UPDATED_PROMPT_PATH = Path("data/updated_system_prompt.txt")
-OPTIMIZER_SYSTEM = """You are an expert at improving AI prediction market trading systems.
+OPTIMIZER_SYSTEM = """You are an expert at improving AI-driven stock trading systems.
 
 You will receive performance statistics showing where the system excels and fails.
-Your job is to write an UPDATED SYSTEM PROMPT for the AI forecasting agent.
+Your job is to write an UPDATED SYSTEM PROMPT for the AI stock analysis agent.
 
 The new prompt should:
-1. Retain the core calibration and reasoning instructions
-2. Add specific guidance based on observed weaknesses
-3. Include category-specific cautions where the AI underperforms
-4. Warn against specific biases that the performance data reveals
-5. Reinforce categories where the AI performs well
+1. Retain the core equity analysis and calibration instructions
+2. Add specific guidance based on observed weaknesses (e.g. sector-specific caution)
+3. Warn against specific biases that the performance data reveals
+4. Reinforce sectors or signal types where the AI performs well
+5. Adjust confidence thresholds if the data shows systematic over/under-confidence
 
 Output ONLY the raw system prompt text (no JSON, no markdown, no commentary).
-Start with: "You are an expert probability forecaster and prediction market analyst."
+Start with: "You are an expert equity analyst and portfolio manager."
 """
 
-BASE_SYSTEM_PROMPT_TEMPLATE = """You are an expert probability forecaster and prediction market analyst.
-Your job is to estimate the true probability of events resolving YES on Polymarket.
+BASE_SYSTEM_PROMPT_TEMPLATE = """You are an expert equity analyst and portfolio manager with deep experience
+in fundamental and technical analysis.
 
-You approach each market with:
-- Rigorous base-rate reasoning
-- Careful reading of resolution criteria
-- Awareness of common biases (recency, availability, narrative)
-- Calibration: you are not overconfident; your 70% estimates are right ~70% of the time
+Your job is to analyze individual stocks and provide structured investment outlooks.
+You consider price vs 52-week range, volume trends, sector context, recent news,
+cost basis for existing positions, beta, dividends, EPS, and earnings catalysts.
 
 {learned_guidance}
 
-You output ONLY valid JSON — no markdown fences, no preamble. Schema:
+You output ONLY valid JSON - no markdown fences, no preamble. Schema:
 {{
-  "probability": <float 0.0–1.0>,
+  "outlook": "BULLISH" | "BEARISH" | "NEUTRAL",
   "confidence": "HIGH" | "MEDIUM" | "LOW",
-  "reasoning": "<2–4 sentences explaining your estimate>",
-  "key_factors": ["<factor 1>", "<factor 2>", "<factor 3>"]
+  "time_horizon": "1W" | "1M" | "3M",
+  "target_price": <float>,
+  "upside_pct": <float>,
+  "reasoning": "<2-4 sentences>",
+  "key_risks": ["<risk 1>", "<risk 2>"],
+  "suggested_action": "BUY" | "SELL" | "HOLD" | "AVOID"
 }}
 
 Definitions:
-- HIGH confidence: you have strong evidence and the resolution criteria are clear
-- MEDIUM confidence: some uncertainty in data or interpretation
-- LOW confidence: highly speculative, thin information, ambiguous criteria
+- HIGH confidence: strong evidence across multiple independent data sources
+- MEDIUM confidence: mixed signals or limited data
+- LOW confidence: highly speculative; broad macro trends dominate
 """
 
 
@@ -93,17 +95,18 @@ class SystemOptimizer:
             logger.info("Insufficient trade history for review.")
             return ""
 
-        # Ask Claude to generate updated guidance
         stats_json = json.dumps(stats, indent=2, default=str)
-        prompt = f"""Here are the performance statistics for an AI prediction market trading agent:
+        prompt = f"""Here are the performance statistics for an AI stock trading agent:
 
 {stats_json}
 
 HUMAN-READABLE SUMMARY:
 {report}
 
-Based on this performance data, write an updated system prompt for the AI forecasting agent.
-Focus specifically on correcting observed weaknesses and reinforcing strengths."""
+Based on this performance data, write an updated system prompt for the AI stock
+analysis agent. Focus specifically on correcting observed weaknesses and
+reinforcing strengths. Adjust sector-specific guidance based on the by_sector
+stats, and update confidence calibration guidance based on the by_confidence data."""
 
         try:
             async with self.client.messages.stream(
@@ -131,18 +134,13 @@ Focus specifically on correcting observed weaknesses and reinforcing strengths."
             )
 
             # Snapshot performance to DB
-            self.db._conn.execute("""
-                INSERT INTO performance_snapshots (ts, total_pnl, win_rate, avg_edge, category_stats, notes)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                datetime.now(timezone.utc).isoformat(),
-                stats["overall"].get("total_pnl_usdc", 0),
-                stats["overall"].get("win_rate", 0),
-                stats["overall"].get("avg_edge", 0),
-                json.dumps(stats.get("by_category", {})),
-                f"Layer 6 review — {days}d window",
-            ))
-            self.db._conn.commit()
+            self.db.log_performance_snapshot(
+                total_pnl=stats["overall"].get("total_pnl_usd", 0),
+                win_rate=stats["overall"].get("win_rate", 0),
+                avg_edge=0.0,  # not applicable for stock trading
+                category_stats=stats.get("by_sector", {}),
+                notes=f"Layer 6 review — {days}d window",
+            )
 
             return updated_prompt
 

@@ -84,11 +84,11 @@ class RSSIngestor:
 # Twitter/X filtered stream ingestion
 # ---------------------------------------------------------------------------
 
-PREDICTION_MARKET_KEYWORDS = [
-    "polymarket", "prediction market", "bet on",
-    "odds of", "what are the chances", "will trump", "will biden",
-    "fed rate", "inflation", "election", "crypto crash", "bitcoin",
-    "ethereum", "world cup", "super bowl", "will it happen",
+MARKET_KEYWORDS = [
+    "stock market", "earnings", "fed rate", "inflation", "interest rate",
+    "GDP", "recession", "bull market", "bear market", "S&P 500",
+    "NASDAQ", "bitcoin", "ethereum", "crypto", "IPO", "merger",
+    "acquisition", "dividend", "buyback", "quarterly results",
 ]
 
 
@@ -127,8 +127,8 @@ class TwitterIngestor:
 
         # Add new rules (each rule is up to 512 chars)
         rules = [
-            {"value": " OR ".join(PREDICTION_MARKET_KEYWORDS[:8]), "tag": "pm_terms_1"},
-            {"value": " OR ".join(PREDICTION_MARKET_KEYWORDS[8:]), "tag": "pm_terms_2"},
+            {"value": " OR ".join(MARKET_KEYWORDS[:8]), "tag": "pm_terms_1"},
+            {"value": " OR ".join(MARKET_KEYWORDS[8:]), "tag": "pm_terms_2"},
         ]
         await session.post(
             self.RULES_URL,

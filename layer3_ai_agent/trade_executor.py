@@ -1,106 +1,137 @@
 """
-Layer 3 — Directional trade executor.
+Layer 3 — Stock trade executor.
 
-Takes a MarketAnalysis, validates it against risk parameters,
-and places the trade if approved.
+Takes a StockAnalysis from the AI analyzer, validates it against risk
+parameters, and executes a buy or sell order via the broker if approved.
+
+Rules:
+  - BUY only if outlook is BULLISH and confidence is MEDIUM or HIGH.
+  - SELL only if outlook is BEARISH and we currently hold the stock.
+  - Position size: HIGH=5% of portfolio, MEDIUM=3% of portfolio, LOW=skip.
+  - Always attach a stop-loss at -8% from entry on new buys.
 """
 
 import logging
+from typing import Optional
 
 from config.settings import config
 from layer1_data.database import Database
-from layer3_ai_agent.market_analyzer import MarketAnalysis
-from utils.polymarket_client import PolymarketClient
+from layer3_ai_agent.market_analyzer import StockAnalysis
+from utils.broker_client import BrokerClient
 
 logger = logging.getLogger(__name__)
 
 
 class TradeExecutor:
     """
-    Executes directional trades recommended by the AI analyzer.
+    Executes directional stock trades recommended by the AI analyzer.
     Checks risk limits before every trade.
     """
 
-    def __init__(self, db: Database, client: PolymarketClient, risk_guardian=None):
+    def __init__(self, db: Database, broker: BrokerClient, risk_guardian=None):
         self.db = db
-        self.client = client
+        self.broker = broker
         self.risk_guardian = risk_guardian
 
-    async def execute(self, analysis: MarketAnalysis) -> bool:
+    def _size_from_confidence(self, confidence: str, portfolio_value: float) -> float:
+        """Return dollar allocation based on confidence level."""
+        alloc = {
+            "HIGH": 0.05,
+            "MEDIUM": 0.03,
+            "LOW": 0.0,
+        }.get(confidence, 0.0)
+        return round(portfolio_value * alloc, 2)
+
+    async def execute(
+        self,
+        analysis: StockAnalysis,
+        portfolio_value: float,
+        current_positions: Optional[dict] = None,
+    ) -> bool:
         """
-        Place a directional trade based on a MarketAnalysis.
+        Place a directional trade based on a StockAnalysis.
         Returns True if the order was submitted successfully.
         """
-        edge = abs(analysis.edge)
-        if edge < config.risk.min_edge_threshold:
-            logger.debug(
-                "Edge %.3f below threshold %.3f — skipping %s",
-                edge, config.risk.min_edge_threshold, analysis.market_id[:8],
-            )
+        if current_positions is None:
+            current_positions = {}
+
+        if analysis.outlook == "NEUTRAL":
+            logger.debug("NEUTRAL outlook — skipping %s", analysis.symbol)
             return False
 
         if analysis.confidence == "LOW":
-            logger.debug("LOW confidence — skipping %s", analysis.market_id[:8])
+            logger.debug("LOW confidence — skipping %s", analysis.symbol)
             return False
 
-        # Ask risk guardian
+        if analysis.outlook == "BULLISH" and analysis.suggested_action == "BUY":
+            side = "buy"
+        elif analysis.outlook == "BEARISH" and analysis.suggested_action == "SELL":
+            if analysis.symbol not in current_positions:
+                logger.debug("BEARISH on %s but no position to sell", analysis.symbol)
+                return False
+            side = "sell"
+        else:
+            logger.debug(
+                "Outlook %s / action %s — no trade for %s",
+                analysis.outlook, analysis.suggested_action, analysis.symbol,
+            )
+            return False
+
+        size_usd = self._size_from_confidence(analysis.confidence, portfolio_value)
+        if size_usd <= 0:
+            return False
+
         if self.risk_guardian:
-            allowed = await self.risk_guardian.check_layer3_trade(analysis)
+            allowed = await self.risk_guardian.check_ai_trade(analysis)
             if not allowed:
-                logger.info("Risk blocked Layer 3 trade: %s", analysis.market_id[:8])
+                logger.info("Risk guardian blocked Layer 3 trade: %s", analysis.symbol)
                 return False
 
-        # Determine token ID and trade price
-        market = self.db.get_market(analysis.market_id)
-        if not market:
-            logger.warning("Market %s not in DB — cannot trade", analysis.market_id[:8])
+        if analysis.current_price <= 0:
+            logger.warning("Invalid price for %s — cannot compute qty", analysis.symbol)
             return False
 
-        if analysis.recommended_side == "YES":
-            token_id = market.get("yes_token_id", "")
-            trade_price = analysis.market_price  # buy YES at current ask
+        if side == "sell":
+            pos = current_positions.get(analysis.symbol, {})
+            qty = float(pos.get("qty", 0))
+            if qty <= 0:
+                logger.warning("No shares to sell for %s", analysis.symbol)
+                return False
         else:
-            token_id = market.get("no_token_id", "")
-            trade_price = 1.0 - analysis.market_price  # NO token price
+            qty = size_usd / analysis.current_price
 
-        if not token_id:
-            logger.warning("No token ID for %s side", analysis.recommended_side)
-            return False
-
-        # Place the order
-        order = await self.client.place_limit_order(
-            token_id=token_id,
-            side="BUY",
-            price=round(trade_price, 4),
-            size=analysis.recommended_size_usdc,
-        )
-
+        order = await self.broker.place_market_order(analysis.symbol, qty, side)
         if not order:
-            logger.error("Order placement failed for %s", analysis.market_id[:8])
+            logger.error("Order placement failed for %s", analysis.symbol)
             return False
+
+        stop_loss_price = None
+        if side == "buy":
+            stop_loss_price = round(
+                analysis.current_price * (1.0 - config.risk.stop_loss_pct), 4
+            )
 
         trade_id = self.db.log_trade({
             "layer": "layer3",
-            "market_id": analysis.market_id,
-            "token_id": token_id,
-            "side": f"BUY_{analysis.recommended_side}",
-            "price": trade_price,
-            "size_usdc": analysis.recommended_size_usdc,
+            "symbol": analysis.symbol,
+            "side": side,
+            "price": analysis.current_price,
+            "size_usd": size_usd,
             "order_id": order.get("id", ""),
             "reasoning": analysis.reasoning,
-            "ai_probability": analysis.ai_probability,
-            "market_price": analysis.market_price,
-            "edge": analysis.edge,
+            "target_price": analysis.target_price,
+            "stop_loss": stop_loss_price,
+            "strategy": f"AI_{analysis.outlook}_{analysis.confidence}",
             "outcome": "OPEN",
         })
 
         logger.info(
-            "Layer 3 trade placed | %s | side=%s price=%.4f size=$%.2f edge=%.3f [trade_id=%d]",
-            analysis.question[:50],
-            analysis.recommended_side,
-            trade_price,
-            analysis.recommended_size_usdc,
-            analysis.edge,
+            "Layer 3 trade placed | %s %s %s qty=%.4f @ $%.2f size=$%.2f "
+            "target=$%.2f stop=$%.2f [trade_id=%d]",
+            analysis.outlook, side.upper(), analysis.symbol,
+            qty, analysis.current_price, size_usd,
+            analysis.target_price,
+            stop_loss_price or 0.0,
             trade_id,
         )
         return True
