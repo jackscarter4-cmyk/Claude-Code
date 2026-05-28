@@ -121,21 +121,32 @@ def _parse_float(val: str) -> Optional[float]:
         return None
 
 
-def load_csv(path: str) -> list[StockData]:
+def _stocks_from_reader(reader) -> list[StockData]:
     stocks = []
+    for row in reader:
+        if not (row.get("symbol") or "").strip():
+            continue
+        kwargs = {"symbol": row["symbol"].strip().upper(), "price": float(row["price"])}
+        for fld in _FLOAT_FIELDS:
+            if fld in row:
+                kwargs[fld] = _parse_float(row[fld])
+        for fld in _STR_FIELDS:
+            if fld in row:
+                kwargs[fld] = row[fld].strip() or None
+        stocks.append(StockData(**kwargs))
+    return stocks
+
+
+def load_csv(path: str) -> list[StockData]:
     with open(path, newline="", encoding="utf-8") as f:
         filtered = (line for line in f if not line.startswith("#") and line.strip())
-        reader = csv.DictReader(filtered)
-        for row in reader:
-            kwargs = {"symbol": row["symbol"].strip().upper(), "price": float(row["price"])}
-            for fld in _FLOAT_FIELDS:
-                if fld in row:
-                    kwargs[fld] = _parse_float(row[fld])
-            for fld in _STR_FIELDS:
-                if fld in row:
-                    kwargs[fld] = row[fld].strip() or None
-            stocks.append(StockData(**kwargs))
-    return stocks
+        return _stocks_from_reader(csv.DictReader(filtered))
+
+
+def load_csv_text(text: str) -> list[StockData]:
+    """Parse CSV from an in-memory string (used by the web UI)."""
+    lines = [ln for ln in text.splitlines() if not ln.startswith("#") and ln.strip()]
+    return _stocks_from_reader(csv.DictReader(lines))
 
 
 def load_json(path: str) -> list[StockData]:
