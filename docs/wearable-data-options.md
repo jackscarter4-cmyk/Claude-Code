@@ -6,20 +6,38 @@ Watch**, **Garmin**.
 
 ---
 
-## Oura Ring — NOT viable
+## Oura Ring — tracks movement, but not in a way we can use
 
-- Oura API v2 (the only available integration) exposes **processed health
-  metrics** only: sleep, readiness, activity summaries, HR / HRV time series,
-  workouts, events. There is **no raw accelerometer / IMU stream** for
-  third-party apps.
-- Even with workarounds, a **finger-worn ring** is the wrong place to capture a
-  golf swing. The wrist is where the literature centers (and where Apple
-  Watch's high-frequency API lives).
-- Verdict: **don't pursue Oura for swing capture.** Great recovery device, wrong
-  tool for this job.
+Important nuance: **Oura does track movement.** It has a 3D accelerometer
+running 24/7, does Automatic Activity Detection across 40+ workout types,
+counts steps, and estimates exercise intensity. That's all real and marketed
+on their site.
+
+What the **developer API** exposes, though, is the *processed output* of all
+that: daily activity summaries, workout events, heart-rate / HRV time series,
+sleep stages, scores. **It does not expose raw accelerometer samples.** The
+hardware has the sensor; the API doesn't open it up.
+
+For a golf swing we'd need raw IMU at ~100+ Hz to find swing-start, impact,
+and reconstruct the motion. Oura's API gives "you did a 15-minute workout that
+looked like X" — useful for daily health, not for a 1.5-second swing.
+
+Two more things that rule it out for golf specifically:
+- Oura's own docs note their algorithm struggles with **"intense movement
+  isolated to your hands (e.g., drumming)"** — a swing is exactly that pattern,
+  at higher intensity. The finger sensor would be saturated/clipped on a
+  downswing even if we *could* read it raw.
+- Literature and Apple's High-Frequency Motion API both center on **wrist**
+  placement, because the wrist is what actually rotates and accelerates
+  through impact.
+
+Verdict: **don't pursue Oura for swing capture.** It's a great recovery
+device, wrong tool for this job.
 
 Sources:
-- [The Oura API — Oura Member Care](https://support.ouraring.com/hc/en-us/articles/4415266939155-The-Oura-API)
+- [Oura — Activity & Movement](https://ouraring.com/activity-and-movement)
+- [Oura Help — How Oura Measures Steps & Activity](https://support.ouraring.com/hc/en-us/articles/360025576833-How-Oura-Measures-Steps-Activity)
+- [Oura Help — Automatic Activity Detection](https://support.ouraring.com/hc/en-us/articles/360063022993-Automatic-Activity-Detection)
 - [Oura API v2 docs](https://cloud.ouraring.com/v2/docs)
 
 ---
