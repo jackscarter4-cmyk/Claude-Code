@@ -273,7 +273,12 @@ def main():
             if not k.startswith(("ema_", "data_preprocessor."))
         }
         missing, unexpected = model.load_state_dict(state, strict=False)
-        missing = [m for m in missing if "num_batches_tracked" not in m]
+        # grid/stride are our own decode buffers; BN counters are irrelevant.
+        missing = [
+            m
+            for m in missing
+            if "num_batches_tracked" not in m and m not in ("grid", "stride")
+        ]
         print(f"load: missing={len(missing)} unexpected={len(unexpected)}")
         if missing:
             print("MISSING:", missing[:20])
