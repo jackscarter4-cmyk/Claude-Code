@@ -26,12 +26,14 @@ import {
   gradeSwing,
 } from "./lib/grade";
 import { type GrayFrame, detectClubhead } from "./lib/clubTrack";
+import { clubheadFromBox, detectClub, getClubSession } from "./lib/clubDetect";
 
 type Status =
   | "idle"
   | "loading-model"
   | "ready"
   | "analyzing"
+  | "club-pass"
   | "saving"
   | "done"
   | "error";
@@ -489,6 +491,64 @@ export default function Home() {
     );
   }
 
+  function seekTo(video: HTMLVideoElement, tS: number): Promise<void> {
+    return new Promise((resolve) => {
+      const onSeeked = () => {
+        video.removeEventListener("seeked", onSeeked);
+        resolve();
+      };
+      video.addEventListener("seeked", onSeeked);
+      video.currentTime = tS;
+    });
+  }
+
+  /**
+   * Refine Frame.club over the downswing window with the GolfPose YOLOX-s
+   * detector (if its ONNX file is deployed at /models/). Returns true if any
+   * frame was updated.
+   */
+  async function runClubPass(
+    video: HTMLVideoElement,
+    computed: Measurements | null,
+  ): Promise<boolean> {
+    const P4 = computed?.phases.P4;
+    const P7 = computed?.phases.P7;
+    if (!P4 || !P7) return false;
+    const session = await getClubSession();
+    if (!session) return false;
+
+    const startMs = P4.t_ms - 300;
+    const endMs = P7.t_ms + 400;
+    const targets = framesRef.current.filter(
+      (f) => f.t_ms >= startMs && f.t_ms <= endMs,
+    );
+    if (targets.length === 0) return false;
+
+    setStatus("club-pass");
+    setProgress(0);
+    let updated = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const f = targets[i];
+      try {
+        await seekTo(video, f.t_ms / 1000);
+        const det = await detectClub(session, video);
+        if (det) {
+          const lw = f.landmarks[15] ?? f.landmarks[16];
+          f.club = lw
+            ? clubheadFromBox(det, lw.x, lw.y)
+            : { x: (det.box.x1 + det.box.x2) / 2, y: (det.box.y1 + det.box.y2) / 2 };
+          updated++;
+        }
+      } catch (err) {
+        console.warn("Club detection failed at frame", i, err);
+      }
+      setProgress((i + 1) / targets.length);
+    }
+    if (updated > 0)
+      setCacheNote(`Club tracked on ${updated}/${targets.length} downswing frames.`);
+    return updated > 0;
+  }
+
   async function runAnalysis() {
     const video = videoRef.current;
     const landmarker = landmarkerRef.current;
@@ -533,8 +593,13 @@ export default function Home() {
       video.removeEventListener("ended", onEnded);
       video.pause();
       video.playbackRate = 1;
+      let computed = computeNow();
+      // Second pass: if the GolfPose club model is deployed, re-detect the
+      // clubhead on the downswing frames with the learned detector (much more
+      // reliable than the motion-diff estimate captured during the first pass).
+      const refined = await runClubPass(video, computed);
+      if (refined) computed = computeNow();
       setStatus("saving");
-      const computed = computeNow();
       try {
         const durationMs = (videoRef.current?.duration ?? 0) * 1000;
         await saveSwing({
@@ -660,17 +725,22 @@ export default function Home() {
         ? "Pose model loaded"
         : status === "analyzing"
           ? `Analyzing… ${Math.round(progress * 100)}% · ${frameCount} frames`
-          : status === "saving"
-            ? "Saving to cache…"
-            : status === "done"
-              ? `Ready · ${frameCount} frames`
-              : status === "error"
-                ? "Error"
-                : "Idle";
+          : status === "club-pass"
+            ? `Tracking club… ${Math.round(progress * 100)}%`
+            : status === "saving"
+              ? "Saving to cache…"
+              : status === "done"
+                ? `Ready · ${frameCount} frames`
+                : status === "error"
+                  ? "Error"
+                  : "Idle";
   const statusDot =
     status === "error"
       ? "bg-red-500"
-      : status === "analyzing" || status === "saving" || status === "loading-model"
+      : status === "analyzing" ||
+          status === "club-pass" ||
+          status === "saving" ||
+          status === "loading-model"
         ? "bg-amber-500 animate-pulse"
         : status === "done" || status === "ready"
           ? "bg-emerald-500"
@@ -917,7 +987,7 @@ export default function Home() {
               />
             </div>
 
-            {status === "analyzing" && (
+            {(status === "analyzing" || status === "club-pass") && (
               <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
                 <div
                   className="h-full bg-emerald-500 transition-[width] duration-100"

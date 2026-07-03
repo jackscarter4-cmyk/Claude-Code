@@ -52,13 +52,19 @@ replacement for it.
 
 ---
 
-## Apple Watch path
+## Apple Watch path (the chosen v1 platform)
+
+Apple ships an API explicitly designed for this — the **High-Frequency Motion
+API** in watchOS 10+, which samples up to **200 Hz** (2× standard CoreMotion).
+Golfshot's "Swing ID" uses this exact API on Apple Watch to detect impact and
+compute tempo / transition / wrist-path, so it's a proven path with vendor
+backing.
 
 ### Components
 1. **watchOS app** (SwiftUI + CoreMotion)
    - `CMBatchedSensorManager` (Apple Watch Series 8+/Ultra, watchOS 10+) for
-     high-rate batched accelerometer + gyro (~200 Hz), or `CMMotionManager`
-     `startDeviceMotionUpdates` (~100 Hz) as the baseline.
+     high-rate batched accelerometer + gyro at the High-Frequency Motion API's
+     **~200 Hz**. Fall back to `CMMotionManager`'s ~100 Hz on older hardware.
    - Run inside a **`HKWorkoutSession`** so the app keeps sampling with the
      wrist down and the screen off (without a workout session, background
      sensor access is heavily throttled).
