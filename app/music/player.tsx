@@ -134,6 +134,11 @@ export default function Player() {
   const qIndexRef = useRef(0);
   const loopRef = useRef(true);
   const pendingIdRef = useRef<string | null>(null);
+  // Whether playback *should* be running: lets us tell a user pause apart
+  // from the browser force-pausing the video when the app goes to the
+  // background, so we can fight the latter and respect the former.
+  const intendedPlayingRef = useRef(false);
+  const resumeAttemptsRef = useRef(0);
 
   const current: Track | undefined = queue[qIndex];
 
@@ -164,6 +169,7 @@ export default function Player() {
   // ---- Player plumbing ----
 
   const startPlayback = useCallback((track: Track) => {
+    intendedPlayingRef.current = true;
     if (playerReadyRef.current && playerRef.current) {
       playerRef.current.loadVideoById(track.id);
     } else {
@@ -203,6 +209,7 @@ export default function Player() {
     const i = qIndexRef.current;
     if (i + 1 < q.length) playAtRef.current(i + 1);
     else if (loopRef.current && q.length > 0) playAtRef.current(0);
+    else intendedPlayingRef.current = false;
   }, []);
 
   const prev = useCallback(() => {
@@ -242,6 +249,8 @@ export default function Player() {
               next();
             } else if (e.data === YT.PlayerState.PLAYING) {
               setIsPlaying(true);
+              intendedPlayingRef.current = true;
+              resumeAttemptsRef.current = 0;
               setDuration(player?.getDuration() ?? 0);
               // Fill in real titles for tracks added by pasted link.
               const q = queueRef.current;
@@ -262,6 +271,24 @@ export default function Player() {
               }
             } else if (e.data === YT.PlayerState.PAUSED) {
               setIsPlaying(false);
+              if (document.hidden && intendedPlayingRef.current) {
+                // The browser paused us because the app went to the
+                // background — the user didn't ask for this, so push back.
+                // (A pause the user requests from the lock screen goes
+                // through our media-session handler, which clears the
+                // intended flag first.)
+                if (resumeAttemptsRef.current < 10) {
+                  resumeAttemptsRef.current += 1;
+                  setTimeout(() => {
+                    if (intendedPlayingRef.current && document.hidden)
+                      player?.playVideo();
+                  }, 300);
+                }
+              } else {
+                // Paused while visible = a deliberate pause (our button or
+                // the YouTube player's own controls).
+                intendedPlayingRef.current = false;
+              }
             }
           },
           onError: () => {
@@ -278,6 +305,18 @@ export default function Player() {
       player?.destroy();
     };
   }, [next]);
+
+  // If the browser managed to keep us paused in the background, pick the
+  // song back up the moment the app is visible again (no-op if already
+  // playing).
+  useEffect(() => {
+    const onVisible = () => {
+      if (!document.hidden && intendedPlayingRef.current)
+        playerRef.current?.playVideo();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   // Progress polling
   useEffect(() => {
@@ -310,8 +349,14 @@ export default function Player() {
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
-    ms.setActionHandler("play", () => playerRef.current?.playVideo());
-    ms.setActionHandler("pause", () => playerRef.current?.pauseVideo());
+    ms.setActionHandler("play", () => {
+      intendedPlayingRef.current = true;
+      playerRef.current?.playVideo();
+    });
+    ms.setActionHandler("pause", () => {
+      intendedPlayingRef.current = false;
+      playerRef.current?.pauseVideo();
+    });
     ms.setActionHandler("previoustrack", () => prev());
     ms.setActionHandler("nexttrack", () => next());
     try {
@@ -336,9 +381,11 @@ export default function Player() {
     const p = playerRef.current;
     if (!p) return;
     if (isPlaying) {
+      intendedPlayingRef.current = false;
       p.pauseVideo();
       anchorRef.current?.pause();
     } else if (current) {
+      intendedPlayingRef.current = true;
       p.playVideo();
       anchorRef.current?.play().catch(() => {});
     }
