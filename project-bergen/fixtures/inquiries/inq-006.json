@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-006",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "samf1988@synthetic-mail.example",
+  "subject": "price?",
+  "body": "how much for a party?",
+  "language": "en"
+}

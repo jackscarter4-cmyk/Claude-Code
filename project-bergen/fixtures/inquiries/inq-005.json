@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-005",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "j.marsh@synthetic-foodmag.example",
+  "subject": "Press: feature on North Fork sustainability",
+  "body": "Good morning - I'm a journalist writing a feature on regenerative farming in Long Island wine for a national food publication. I'd love to arrange a visit and a short interview about your composting and biodynamic program. Who should I coordinate with? Jordan Marsh",
+  "language": "en"
+}

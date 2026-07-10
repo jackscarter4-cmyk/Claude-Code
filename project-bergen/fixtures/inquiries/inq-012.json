@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-012",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "abernstein@synthetic-mail.example",
+  "subject": "Private Tasting Suite - which price is right?",
+  "body": "Hi - I'm looking at the Private Tasting Suite for 8 guests next month. Your private events page says $150 per person but your FAQ page says $185. Which one is correct? Want to make sure before I propose it to the group. Adam Bernstein",
+  "language": "en"
+}

@@ -1,0 +1,15 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-015",
+  "type": "email.inbound",
+  "occurred_at": "2026-07-10T10:12:00Z",
+  "member": {
+    "member_id": "M-1015",
+    "name": "Omar Haddad (synthetic)",
+    "tier": "6-bottle"
+  },
+  "data": {
+    "subject": "membership question",
+    "body": "Hi - I had a general question about my membership options and what might make sense for us going forward. Could someone give me a ring when convenient? Thanks, Omar"
+  }
+}

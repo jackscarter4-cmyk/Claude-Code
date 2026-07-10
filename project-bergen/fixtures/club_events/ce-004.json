@@ -1,0 +1,17 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-004",
+  "type": "subscription.payment_failed",
+  "occurred_at": "2026-07-09T16:22:00Z",
+  "member": {
+    "member_id": "M-1004",
+    "name": "Dev Anand (synthetic)",
+    "tier": "Cellar"
+  },
+  "data": {
+    "amount": 375,
+    "currency": "USD",
+    "reason": "insufficient_funds",
+    "attempt": 1
+  }
+}

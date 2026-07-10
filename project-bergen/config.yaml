@@ -1,0 +1,38 @@
+# Project Bergen — single source of model + runtime configuration.
+# All components read model strings from here. Never hardcode a model name.
+
+models:
+  # Classification and routing: small, fast, low effort.
+  classifier: claude-haiku-4-5
+  classifier_max_tokens: 300
+  # Drafting and synthesis: mid-tier, medium/high effort.
+  drafter: claude-sonnet-4-6
+  drafter_max_tokens: 900
+  # LLM-as-judge for draft quality evals.
+  judge: claude-sonnet-4-6
+  judge_max_tokens: 500
+
+runtime:
+  # When ANTHROPIC_API_KEY is unset (or BERGEN_OFFLINE=1), every component
+  # falls back to deterministic rule-based classification and template
+  # drafting so the full pipeline + evals run with zero network access.
+  # Output is labeled with the mode that produced it.
+  allow_offline_fallback: true
+
+http:
+  # Polite, identifiable, read-only. Applies to watcher --live and audit --live.
+  user_agent: "ProjectBergen-SeamLayerDemo/0.1 (read-only research; rate-limited; contact: events-demo@example.com)"
+  min_delay_seconds: 3.0
+  timeout_seconds: 15
+  cache_dir: out/http_cache
+  respect_robots_txt: true
+
+sla_hours:
+  # Escalation ladder pings at 50% and 100% of these. Nothing auto-closes.
+  chargeback: 8          # same business day
+  cancellation_request: 24
+  failed_payment: 48     # retry etiquette: no dunning-shame, simple card-update ask
+  address_change: 24     # must beat the next shipment cutoff
+  skip_request: 48
+  tier_downgrade: 48
+  unsure: 4              # anything unclassifiable goes to a human fast

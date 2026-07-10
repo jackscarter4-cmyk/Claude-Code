@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-003",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "claire.and.tom@synthetic-mail.example",
+  "subject": "Wedding inquiry - October 17, 2027",
+  "body": "Hi, my fiance and I visited last fall and fell in love with the property. We're planning a wedding for about 180 guests on October 17, 2027. Is Meadowlark available, and what does the process look like? Claire & Tom",
+  "language": "en"
+}

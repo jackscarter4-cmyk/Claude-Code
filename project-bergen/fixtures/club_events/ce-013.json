@@ -1,0 +1,16 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-013",
+  "type": "subscription.tier_change_requested",
+  "occurred_at": "2026-07-08T13:37:00Z",
+  "member": {
+    "member_id": "M-1013",
+    "name": "Marco Silva (synthetic)",
+    "tier": "Cellar"
+  },
+  "data": {
+    "direction": "down",
+    "from_tier": "Cellar",
+    "to_tier": "9-bottle"
+  }
+}

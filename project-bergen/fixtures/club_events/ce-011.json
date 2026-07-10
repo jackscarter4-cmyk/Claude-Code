@@ -1,0 +1,15 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-011",
+  "type": "subscription.skip_requested",
+  "occurred_at": "2026-07-07T19:20:00Z",
+  "member": {
+    "member_id": "M-1011",
+    "name": "Kai Nakamura (synthetic)",
+    "tier": "6-bottle"
+  },
+  "data": {
+    "shipment": "2026-Q3",
+    "channel": "member_portal"
+  }
+}

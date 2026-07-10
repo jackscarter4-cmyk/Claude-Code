@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-008",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "gene.park@synthetic-mail.example",
+  "subject": "Question about my wine club charge",
+  "body": "Hi - not sure this is the right address, but I'm a wine club member and my card was charged twice for the spring shipment. Can someone look at my membership billing? I'm confused about what happened. Gene Park",
+  "language": "en"
+}

@@ -1,0 +1,96 @@
+# ============================================================================
+# GROUND TRUTH — Macari Vineyards experiences, prices, capacities, policies.
+# THE single source of truth. Every price, capacity, date, or policy that
+# appears in ANY generated draft MUST trace to this file (enforced in code
+# by common/validator.py — one violation fails the build).
+#
+# Sources: public pages on macariwines.com / meadowlarknorthfork.com as of
+# 2026-07. Where the public site contradicts itself, BOTH values are encoded
+# with `conflict: true` — the responder refuses to quote a conflicted price.
+# ============================================================================
+
+winery:
+  name: Macari Vineyards
+  location: "150 Bergen Ave, Mattituck, NY 11952"
+  region: North Fork of Long Island
+  voice: "family-owned, warm, hospitality-forward"
+
+experiences:
+  seated_tasting:
+    name: Seated Tasting with Charcuterie
+    price_per_guest: 45
+    price_note: "published range $40–50 depending on flight; $45 is the standard flight (estimate: midpoint of published range)"
+    estimate: true
+    min_guests: 1
+    max_guests: 12
+    source_url: https://macariwines.com/visit/
+
+  barrel_cellar:
+    name: Barrel Cellar Experience
+    price_per_guest: 75
+    min_guests: 2
+    max_guests: 8
+    source_url: https://macariwines.com/private-events/
+
+  private_tasting_suite:
+    name: Private Tasting Suite
+    # LIVE CONFLICT on macariwines.com — two published prices for the same
+    # experience. The responder must refuse to quote either and flag it.
+    # This is a working demonstration of the stale-surface audit finding.
+    conflict: true
+    prices:
+      - price_per_guest: 150
+        source_url: https://macariwines.com/private-events/
+      - price_per_guest: 185
+        source_url: https://macariwines.com/f-a-q/
+    min_guests: 2
+    max_guests: 10
+
+  robertas_pizza_pairing:
+    name: Roberta's Pizza & Wine Pairing
+    price_per_guest: 65
+    price_note: "estimate: derived from published pairing menus; confirm before quoting externally"
+    estimate: true
+    min_guests: 2
+    max_guests: 12
+    source_url: https://macariwines.com/visit/
+
+  bergen_road_bungalows:
+    name: Bergen Road Bungalows
+    seasonal: true
+    season: "May through October"
+    rentals_per_day: 1
+    price_per_guest: null   # priced per rental on request — never quote a number
+    source_url: https://macariwines.com/bungalow/
+
+  meadowlark_weddings:
+    name: Meadowlark (weddings & large events)
+    venue: meadowlarknorthfork.com
+    capacity_seated: 200
+    capacity_note: "listed as 200+; anything above 200 requires events-team confirmation — use the confirm-and-follow-up phrase"
+    buildings: 2
+    acres: 20
+    pricing: "custom proposal only — never quote a wedding number from this file"
+    source_url: https://meadowlarknorthfork.com/
+
+wine_club:
+  name: Macari Wine Club
+  tiers:
+    - name: "6-bottle"
+      price_per_shipment: 135
+    - name: "9-bottle"
+      price_per_shipment: 200
+    - name: "Cellar"
+      price_per_shipment: 375
+  shipment_cadence: quarterly
+  minimum_commitment_shipments: 4
+  source_url: https://macariwines.com/wine-club/
+
+policies:
+  closed_dates_2026:
+    - 2026-11-26   # Thanksgiving
+    - 2026-12-25   # Christmas Day
+    - 2027-01-01   # New Year's Day
+  tasting_room_hours: "Daily 11am–5pm (confirm holiday hours by phone)"
+  events_response_target_minutes: 60
+  escape_phrase: "I'll confirm and follow up"

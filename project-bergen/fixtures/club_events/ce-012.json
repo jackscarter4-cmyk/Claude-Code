@@ -1,0 +1,15 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-012",
+  "type": "subscription.skip_requested",
+  "occurred_at": "2026-07-09T08:44:00Z",
+  "member": {
+    "member_id": "M-1012",
+    "name": "Lena Fischer (synthetic)",
+    "tier": "Cellar"
+  },
+  "data": {
+    "shipment": "2026-Q3",
+    "channel": "email"
+  }
+}
