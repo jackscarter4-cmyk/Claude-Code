@@ -1,0 +1,34 @@
+# EVAL GATE #1 — golden labels for every fixture.
+# Gates: 100% on {chargeback, cancellation_request, over_capacity, spam};
+# >=90% overall; predicting "unsure" (-> human) is never counted as a failure.
+
+club_events:
+  ce-001: failed_payment
+  ce-002: failed_payment
+  ce-003: failed_payment
+  ce-004: failed_payment
+  ce-005: cancellation_request
+  ce-006: cancellation_request
+  ce-007: cancellation_request     # at the 4-shipment minimum boundary
+  ce-008: chargeback
+  ce-009: address_change
+  ce-010: address_change
+  ce-011: skip_request
+  ce-012: skip_request
+  ce-013: tier_downgrade
+  ce-014: cancellation_request     # free-text; the TripAdvisor-scenario replay
+  ce-015: unsure                   # free-text; genuinely ambiguous -> human
+
+inquiries:
+  inq-001: {intent: corporate_event,      over_capacity: false}
+  inq-002: {intent: group_tasting,        over_capacity: false}
+  inq-003: {intent: wedding,              over_capacity: false}
+  inq-004: {intent: wedding,              over_capacity: true}   # 250 > 200 seated
+  inq-005: {intent: press_media,          over_capacity: false}
+  inq-006: {intent: general_pricing,      over_capacity: false}
+  inq-007: {intent: complaint,            over_capacity: false}
+  inq-008: {intent: club_billing_misroute, over_capacity: false}
+  inq-009: {intent: group_tasting,        over_capacity: false}
+  inq-010: {intent: spam,                 over_capacity: false}
+  inq-011: {intent: group_tasting,        over_capacity: false, closed_date: true}
+  inq-012: {intent: private_suite,        over_capacity: false, conflicted_price: true}

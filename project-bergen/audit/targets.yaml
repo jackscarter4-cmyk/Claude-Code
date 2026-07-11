@@ -1,0 +1,37 @@
+# Stale-surface audit targets: every public page where Macari states a price,
+# an hour, or a policy. `snapshot` is a cached copy in audit/cache/ used by
+# default; `--live` re-fetches each `url` politely (robots-respecting, rate-
+# limited, cached) and falls back to the snapshot on any failure.
+#
+# NOTE ON SNAPSHOTS: the .html files in audit/cache/ are RECONSTRUCTIONS of
+# the relevant fragments of these public pages, built to carry the findings
+# documented in the sales brief (the $150/$185 conflict, the "FAQ draft"
+# title, the 2016 privacy-policy date, the stale Tock listing). Before the
+# meeting, run `python -m audit.pipeline --live` to replace them with
+# same-day captures.
+
+targets:
+  - id: private_events
+    url: https://macariwines.com/private-events/
+    snapshot: audit/cache/macariwines_private-events.html
+  - id: faq
+    url: https://macariwines.com/f-a-q/
+    snapshot: audit/cache/macariwines_f-a-q.html
+  - id: wine_club
+    url: https://macariwines.com/wine-club/
+    snapshot: audit/cache/macariwines_wine-club.html
+  - id: bungalow
+    url: https://macariwines.com/bungalow/
+    snapshot: audit/cache/macariwines_bungalow.html
+  - id: privacy_policy
+    url: https://macariwines.com/privacy-policy/
+    snapshot: audit/cache/macariwines_privacy-policy.html
+  - id: meadowlark
+    url: https://meadowlarknorthfork.com/
+    snapshot: audit/cache/meadowlarknorthfork.html
+  - id: tock
+    url: https://www.exploretock.com/macarivineyards
+    snapshot: audit/cache/tock_macari.html
+  - id: google_business
+    url: https://www.google.com/maps/place/Macari+Vineyards
+    snapshot: audit/cache/google_business.html

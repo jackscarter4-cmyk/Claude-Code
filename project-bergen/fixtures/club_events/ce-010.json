@@ -1,0 +1,17 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-010",
+  "type": "customer.address_updated",
+  "occurred_at": "2026-07-09T14:11:00Z",
+  "member": {
+    "member_id": "M-1010",
+    "name": "Jonas Petrov (synthetic)",
+    "tier": "9-bottle"
+  },
+  "data": {
+    "next_shipment_status": "label_printed",
+    "old_state": "NY",
+    "new_state": "FL",
+    "note": "label already printed - needs manual intercept"
+  }
+}

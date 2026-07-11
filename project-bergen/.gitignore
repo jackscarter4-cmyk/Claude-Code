@@ -1,0 +1,6 @@
+# generated artifacts — everything in out/ is rebuilt by `make demo`
+out/
+# watcher dedupe state (per-machine)
+watcher/state.json
+__pycache__/
+*.pyc

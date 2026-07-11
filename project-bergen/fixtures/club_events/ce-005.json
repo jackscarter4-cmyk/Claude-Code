@@ -1,0 +1,15 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-005",
+  "type": "membership.cancellation_requested",
+  "occurred_at": "2026-07-07T10:00:00Z",
+  "member": {
+    "member_id": "M-1005",
+    "name": "Elena Brooks (synthetic)",
+    "tier": "6-bottle"
+  },
+  "data": {
+    "shipments_completed": 6,
+    "channel": "member_portal"
+  }
+}

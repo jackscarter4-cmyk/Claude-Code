@@ -1,0 +1,17 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-001",
+  "type": "subscription.payment_failed",
+  "occurred_at": "2026-07-08T09:14:00Z",
+  "member": {
+    "member_id": "M-1001",
+    "name": "Avery Stone (synthetic)",
+    "tier": "6-bottle"
+  },
+  "data": {
+    "amount": 135,
+    "currency": "USD",
+    "reason": "card_declined",
+    "attempt": 1
+  }
+}

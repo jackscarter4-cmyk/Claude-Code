@@ -1,0 +1,16 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-009",
+  "type": "customer.address_updated",
+  "occurred_at": "2026-07-08T09:50:00Z",
+  "member": {
+    "member_id": "M-1009",
+    "name": "Iris Chen (synthetic)",
+    "tier": "6-bottle"
+  },
+  "data": {
+    "next_shipment_status": "pending_fulfillment",
+    "old_state": "NY",
+    "new_state": "CT"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-011",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "hwhitfield@synthetic-mail.example",
+  "subject": "Tasting on Thanksgiving?",
+  "body": "Hi there - my family will be out east for the holiday and we'd love to book a tasting for 6 on November 26, 2026. Are you open that day? Helen Whitfield",
+  "language": "en"
+}

@@ -1,0 +1,16 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-007",
+  "type": "membership.cancellation_requested",
+  "occurred_at": "2026-07-09T12:05:00Z",
+  "member": {
+    "member_id": "M-1007",
+    "name": "Grace Lindqvist (synthetic)",
+    "tier": "6-bottle"
+  },
+  "data": {
+    "shipments_completed": 3,
+    "channel": "member_portal",
+    "note": "member has completed 3 shipments; minimum commitment is 4 - boundary case"
+  }
+}

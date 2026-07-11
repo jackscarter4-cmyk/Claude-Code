@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-004",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "priya.desai@synthetic-mail.example",
+  "subject": "Large wedding - 250 guests",
+  "body": "Hello - we're considering venues for our wedding in June 2027 and expect around 250 guests. Can your space handle a wedding of that size? We'd also want both indoor and outdoor options. Priya",
+  "language": "en"
+}

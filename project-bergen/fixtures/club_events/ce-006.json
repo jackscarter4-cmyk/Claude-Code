@@ -1,0 +1,15 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-006",
+  "type": "membership.cancellation_requested",
+  "occurred_at": "2026-07-08T15:30:00Z",
+  "member": {
+    "member_id": "M-1006",
+    "name": "Frank Osei (synthetic)",
+    "tier": "9-bottle"
+  },
+  "data": {
+    "shipments_completed": 5,
+    "channel": "phone"
+  }
+}

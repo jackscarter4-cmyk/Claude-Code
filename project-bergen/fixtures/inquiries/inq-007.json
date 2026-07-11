@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-007",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "rlombardi@synthetic-mail.example",
+  "subject": "Thinking about booking but very unhappy",
+  "body": "I was considering booking my birthday here for a party of 12, but honestly I'm extremely disappointed. On our last visit we waited 45 minutes for a flight that never came and nobody checked on us. Before I even think about booking I want to speak to a manager about what happened. Rose Lombardi",
+  "language": "en"
+}

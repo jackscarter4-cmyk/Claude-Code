@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-002",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "mia.okafor@synthetic-mail.example",
+  "subject": "Bachelorette weekend - group of 10",
+  "body": "Hello! I'm organizing my best friend's bachelorette and we'd love to do a tasting. We're a group of 10, coming out to the North Fork the weekend of August 15. Do you take groups that size, and is there a food option? - Mia",
+  "language": "en"
+}

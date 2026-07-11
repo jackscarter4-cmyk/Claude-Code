@@ -1,0 +1,17 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-008",
+  "type": "payment.chargeback_opened",
+  "occurred_at": "2026-07-09T17:45:00Z",
+  "member": {
+    "member_id": "M-1008",
+    "name": "Hank Moreau (synthetic)",
+    "tier": "Cellar"
+  },
+  "data": {
+    "amount": 375,
+    "currency": "USD",
+    "processor_deadline": "2026-07-16",
+    "reason_code": "product_not_received"
+  }
+}

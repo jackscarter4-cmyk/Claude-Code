@@ -1,0 +1,15 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "ce-014",
+  "type": "email.inbound",
+  "occurred_at": "2026-07-09T18:58:00Z",
+  "member": {
+    "member_id": "M-1014",
+    "name": "Nora Gallagher (synthetic)",
+    "tier": "9-bottle"
+  },
+  "data": {
+    "subject": "CANCEL my membership - fifth attempt",
+    "body": "I requested to cancel my wine club membership over a month ago and nothing happened. Yesterday my card was billed $200 again for a shipment I do not want. I have called five times and left messages and nobody has called me back. Cancel this membership and refund the charge, or my next step is posting about this everywhere I can."
+  }
+}

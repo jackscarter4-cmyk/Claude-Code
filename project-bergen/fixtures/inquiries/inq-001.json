@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-001",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "dana.reyes@synthetic-corp.example",
+  "subject": "Corporate offsite in September?",
+  "body": "Hi Macari team - I'm planning a corporate offsite for our company. We'd be a team of 25 people, ideally a Thursday in September, wine tasting plus some food. What options do you have and what should we budget per person? Thanks! Dana",
+  "language": "en"
+}

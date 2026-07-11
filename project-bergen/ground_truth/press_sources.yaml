@@ -1,0 +1,34 @@
+# Wine press / blog feeds the reputation watcher monitors.
+# `rss` entries are attempted live (politely, cached) when watcher runs with
+# --live; everything falls back to fixtures/press/ otherwise.
+sources:
+  - name: Wine Enthusiast
+    url: https://www.wineenthusiast.com/
+    rss: https://www.wineenthusiast.com/feed/
+  - name: VinePair
+    url: https://vinepair.com/
+    rss: https://vinepair.com/feed/
+  - name: JancisRobinson.com
+    url: https://www.jancisrobinson.com/
+    rss: null   # subscription site — headlines only via fixtures
+  - name: Wine Spectator
+    url: https://www.winespectator.com/
+    rss: null
+  - name: Food & Wine
+    url: https://www.foodandwine.com/
+    rss: null
+  - name: Northforker
+    url: https://northforker.com/
+    rss: https://northforker.com/feed/
+  - name: "Dan's Papers"
+    url: https://www.danspapers.com/
+    rss: https://www.danspapers.com/feed/
+  - name: Edible East End
+    url: https://www.edibleeastend.com/
+    rss: null
+  - name: Worth
+    url: https://www.worth.com/
+    rss: null
+  - name: New York Wines
+    url: https://newyorkwines.org/
+    rss: null

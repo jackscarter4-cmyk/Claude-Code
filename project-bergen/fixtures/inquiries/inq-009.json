@@ -1,0 +1,9 @@
+{
+  "_synthetic": "SYNTHETIC FIXTURE - Project Bergen demo. Every name, email address, member, and event in this file is invented. No real customer or member data is present.",
+  "id": "inq-009",
+  "channel": "events@macariwines.com (simulated shared inbox)",
+  "from": "lucia.fernandez@synthetic-mail.example",
+  "subject": "Cata para grupo de 8",
+  "body": "Hola, buenos dias. Quisiera reservar una cata de vinos para un grupo de 8 personas para celebrar un cumpleanos, la primera semana de agosto. Tienen opciones con comida? Gracias, Lucia",
+  "language": "es"
+}

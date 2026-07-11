@@ -1,0 +1,16 @@
+# Guest-review surfaces the reputation watcher monitors.
+# Live scraping of review platforms is intentionally conservative: these
+# platforms gate content behind dynamic pages and their robots policies vary,
+# so the demo runs from dated fixtures by default. `fixture_dir` is always
+# authoritative; `url` documents where a production deployment would point
+# an approved API/feed integration (never credentialed scraping).
+sources:
+  - platform: google
+    url: "https://www.google.com/maps/place/Macari+Vineyards"
+    fixture_dir: fixtures/reviews
+  - platform: yelp
+    url: "https://www.yelp.com/biz/macari-vineyards-mattituck"
+    fixture_dir: fixtures/reviews
+  - platform: tripadvisor
+    url: "https://www.tripadvisor.com/Attraction_Review-Macari_Vineyards"
+    fixture_dir: fixtures/reviews

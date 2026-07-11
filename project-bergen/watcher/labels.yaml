@@ -1,0 +1,74 @@
+# Fixed theme label set for the reputation watcher. The labels are where the
+# quality lives: one crisp paragraph each, with edge cases, so haiku (or the
+# offline keyword fallback) has an unambiguous target. Anything that fits no
+# label -> other_human, which routes to a person.
+
+labels:
+  pricing_transparency:
+    definition: >
+      The guest or writer is confused or surprised by a price: quoted one
+      number and charged another, saw different prices on different pages,
+      found fees they didn't expect, or couldn't find a price at all.
+      Edge case: "expensive but worth it" is NOT this label - complaints
+      about the level of a price belong under service or quality; this label
+      is strictly about prices being unclear, inconsistent, or surprising.
+    keywords: [price, quoted, charged more, didn't match, website said, fee, pricing]
+
+  order_routing:
+    definition: >
+      A purchase, pickup, or shipment went to the wrong place or the wrong
+      process: pickup orders routed to shipping, wrong warehouse, missing
+      case at will-call, order lost between systems. Edge case: a late but
+      correctly-routed shipment is service_pace, not this.
+    keywords: [pickup, order wasn't, routed, shipping instead, wrong address, lost order]
+
+  billing_membership:
+    definition: >
+      Wine-club and membership money problems: billed after cancelling,
+      double charges, refunds not appearing, card retries, minimum-commitment
+      disputes. Edge case: a member complaining about wine quality is
+      wine_quality_praise/negative territory, not this - this label is about
+      money and membership state.
+    keywords: [billed, cancel, membership, charged twice, refund, club, subscription]
+
+  service_pace:
+    definition: >
+      Speed and attentiveness on site or in channels: long waits for
+      seating, flights, follow-up calls or emails that never came. Edge
+      case: a friendly-but-slow visit still belongs here; rudeness without
+      slowness belongs to other_human.
+    keywords: [waited, slow, never came, no response, flag someone down, minutes for]
+
+  events_weddings:
+    definition: >
+      Anything about hosted events - weddings, corporate gatherings, large
+      parties - from either direction: praise for a flawless wedding or a
+      complaint about event logistics. Edge case: a tasting-room birthday
+      toast is a tasting review, not this; this label is for the events
+      operation (Meadowlark, private events).
+    keywords: [wedding, event, reception, bride, groom, corporate, meadowlark]
+
+  wine_quality_praise:
+    definition: >
+      The wine itself is the subject - praise or criticism of specific
+      bottles, flights, vintages, or winemaking. Edge case: "great wine but
+      slow service" carries TWO signals; tag the item by its dominant
+      subject and let the digest's GAP section reconcile the tension.
+    keywords: [sauvignon, blanc, rose, vintage, flight, delicious, best tasting,
+               winemaking, outstanding, releases, somm, pairing]
+
+  sustainability_press:
+    definition: >
+      Coverage or comments centered on farming practice: biodynamics,
+      composting, regenerative agriculture, soil, certifications. Edge case:
+      a passing "they farm organically" inside a tasting review stays with
+      the review's dominant theme; this label is for items whose POINT is
+      the farming.
+    keywords: [biodynamic, compost, regenerative, sustainab, soil, organic, farming]
+
+  other_human:
+    definition: >
+      The safety net. Anything ambiguous, mixed beyond a dominant theme,
+      or outside the label set - legal threats, staffing stories, weather
+      closures. Routing here is never a failure; it means a person reads it.
+    keywords: []
