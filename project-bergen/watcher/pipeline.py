@@ -101,21 +101,28 @@ def classify(item, labels):
 
 # ------------------------------------------------------------------ digest
 def synthesize_gap(press_items, review_items):
+    """Returns a list of terse bullet strings — telegram style, no essay."""
     if llm.mode() != "offline":
-        prompt = ("In exactly two sentences, state where the press narrative and the guest "
-                  "experience diverge this week, for a winery's operations director.\n\n"
+        prompt = ("Write 3-4 bullet points (each one short line, telegram style, no filler, "
+                  "no adjectives you don't need) on where the press narrative and the guest "
+                  "experience diverge this week, for a winery's operations director. "
+                  "Start each line with '- '.\n\n"
                   f"PRESS:\n{json.dumps(press_items)}\n\nGUESTS:\n{json.dumps(review_items)}")
-        return llm.complete("drafter", "You write terse, specific operational syntheses.", prompt)
+        raw = llm.complete("drafter", "You write terse, specific operational syntheses.", prompt)
+        bullets = [l.lstrip("-• ").strip() for l in raw.splitlines() if l.strip().lstrip("-• ")]
+        if bullets:
+            return bullets
 
     press_themes = sorted({i["theme"].replace("_", " ") for i in press_items}) or ["(none)"]
     neg = [i for i in review_items if i["sentiment"] in ("negative", "mixed")]
     neg_themes = sorted({i["theme"].replace("_", " ") for i in neg})
     if not neg_themes:
-        return ("Press and guest sentiment point the same direction this week. "
-                "No divergence worth your time.")
-    return (f"The press is telling a story about {', '.join(press_themes)} - and guests agree "
-            f"about the wine. But the negative guest signals cluster on {', '.join(neg_themes)}: "
-            "the product earns the coverage; the seams around it are what guests write about.")
+        return ["Press and guests point the same direction this week.",
+                "No divergence worth your time."]
+    return [f"Press this week: {', '.join(press_themes)}.",
+            f"Guests agree on the wine - the praise matches the coverage.",
+            f"The low ratings aren't about the product: {', '.join(neg_themes)}.",
+            "The wine earns the coverage; the seams spend it."]
 
 
 CSS = """
@@ -127,8 +134,9 @@ h2{font-size:.8rem;letter-spacing:.25em;color:#5b1f2e;margin-top:2.2rem;text-tra
 .item{margin:1rem 0;padding-left:1rem;border-left:2px solid #e0d4c3}
 .item .meta{font-size:.75rem;color:#8a7360;letter-spacing:.05em}
 .item.negative{border-left-color:#5b1f2e}.item.mixed{border-left-color:#b08947}
-.gap{background:#fff;border:1px solid #e0d4c3;padding:1.2rem 1.4rem;margin-top:1rem;
-     font-style:italic} .tag{font-size:.7rem;color:#5b1f2e;letter-spacing:.1em}
+.gap{background:#fff;border:1px solid #e0d4c3;padding:1.2rem 1.4rem;margin-top:1rem}
+.gap ul{margin:0;padding-left:1.1rem}.gap li{margin:.35rem 0}
+.tag{font-size:.7rem;color:#5b1f2e;letter-spacing:.1em}
 footer{margin-top:3rem;font-size:.7rem;color:#8a7360}
 """
 
@@ -158,13 +166,14 @@ def render_digest(new_press, new_reviews, today, mode_note):
                     f"{i.get('title') or ''} {i.get('excerpt') or i.get('text','')}\n"
                     f"    {i.get('url','')}")
 
+        gap_html = "".join(f"<li>{html.escape(b)}</li>" for b in gap)
         body_html = (
             "<h2>What the press said</h2>" + "".join(map(item_html, new_press)) +
             "<h2>What guests said</h2>" + "".join(map(item_html, new_reviews)) +
-            f"<h2>The gap</h2><div class='gap'>{html.escape(gap)}</div>")
+            f"<h2>The gap</h2><div class='gap'><ul>{gap_html}</ul></div>")
         body_txt = ("WHAT THE PRESS SAID\n" + "\n".join(map(item_txt, new_press)) +
                     "\n\nWHAT GUESTS SAID\n" + "\n".join(map(item_txt, new_reviews)) +
-                    "\n\nTHE GAP\n  " + gap)
+                    "\n\nTHE GAP\n" + "\n".join(f"  - {b}" for b in gap))
 
     page = (f"<title>{title}</title><style>{CSS}</style>"
             f"<h1>MACARI VINEYARDS<small>EXTERNAL SIGNALS — WEEK OF {today}</small></h1>"
