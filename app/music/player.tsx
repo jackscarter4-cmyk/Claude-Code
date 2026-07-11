@@ -111,6 +111,7 @@ export default function Player() {
   const [duration, setDuration] = useState(0);
   const [loopQueue, setLoopQueue] = useState(true);
   const [videoExpanded, setVideoExpanded] = useState(false);
+  const [keepAwake, setKeepAwake] = useState(true);
 
   // Search state
   const [query, setQuery] = useState("");
@@ -305,6 +306,34 @@ export default function Player() {
       player?.destroy();
     };
   }, [next]);
+
+  // While music plays, hold a screen wake lock so the phone doesn't auto-lock
+  // (locking is what kills web playback most often). Released on pause and
+  // re-acquired when the tab becomes visible again, per the API's lifecycle.
+  useEffect(() => {
+    if (!keepAwake || !isPlaying || !("wakeLock" in navigator)) return;
+    let sentinel: WakeLockSentinel | null = null;
+    let stopped = false;
+    const acquire = async () => {
+      try {
+        const s = await navigator.wakeLock.request("screen");
+        if (stopped) await s.release();
+        else sentinel = s;
+      } catch {
+        // denied (e.g. battery saver) — nothing to do
+      }
+    };
+    const onVisible = () => {
+      if (!document.hidden) acquire();
+    };
+    acquire();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      sentinel?.release().catch(() => {});
+    };
+  }, [keepAwake, isPlaying]);
 
   // If the browser managed to keep us paused in the background, pick the
   // song back up the moment the app is visible again (no-op if already
@@ -916,6 +945,13 @@ export default function Player() {
               className={`rounded px-2 py-0.5 ${loopQueue ? "bg-white/15 text-neutral-100" : "hover:bg-white/10"}`}
             >
               🔁 Loop queue {loopQueue ? "on" : "off"}
+            </button>
+            <button
+              onClick={() => setKeepAwake((v) => !v)}
+              className={`rounded px-2 py-0.5 ${keepAwake ? "bg-white/15 text-neutral-100" : "hover:bg-white/10"}`}
+              title="Stops the phone from auto-locking while music plays"
+            >
+              ☀ Screen awake {keepAwake ? "on" : "off"}
             </button>
             <button
               onClick={() => setVideoExpanded((v) => !v)}
