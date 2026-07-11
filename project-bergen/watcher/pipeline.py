@@ -126,7 +126,8 @@ def synthesize_gap(press_items, review_items):
 
 
 CSS = """
-body{font-family:Georgia,'Times New Roman',serif;background:#faf7f2;color:#2b2320;
+body{font-family:'Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+     background:#faf7f2;color:#2b2320;
      max-width:720px;margin:2rem auto;padding:0 1.5rem;line-height:1.55}
 h1{font-size:1.6rem;font-weight:normal;letter-spacing:.12em;border-bottom:1px solid #c9b8a8;
    padding-bottom:.6rem} h1 small{display:block;font-size:.75rem;letter-spacing:.2em;color:#8a7360}
