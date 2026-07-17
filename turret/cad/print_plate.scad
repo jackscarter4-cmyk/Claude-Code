@@ -14,3 +14,9 @@ translate([  0,  40, 0]) camera_mount();
 
 // galvo pad
 translate([  0, -55, 0]) galvo_pad();
+
+// The electronics tray and photodiode holder are printed from their own files
+// (electronics_tray.scad, photodiode_holder.scad) — the tray is large and the
+// holder slices best on its own. Uncomment to co-plate if they fit your run:
+// use <electronics_tray.scad>
+// use <photodiode_holder.scad>

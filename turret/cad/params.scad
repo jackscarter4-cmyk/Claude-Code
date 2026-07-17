@@ -79,3 +79,49 @@ cam_hole_dx      = 21;    // PCB mount-hole horizontal spacing — MEASURE yours
 cam_hole_dz      = 0;     // vertical offset of the mount holes from pocket center
 
 cam_center_z     = cam_base_t + cam_plate_h / 2;   // PCB centre height (derived)
+
+// =============================================================================
+//  ELECTRONICS TRAY — holds the Jetson Orin Nano + the MCP4922/op-amp protoboard
+//  Not stiffness-critical (no optics on it), so it's a light plate with standoff
+//  bosses. Bolts to the frame with M5 T-nut bolts. MEASURE your board hole
+//  patterns — the Jetson dev-kit pattern below is nominal.
+// =============================================================================
+tray_w           = 172;   // tray plate width  (X)
+tray_d           = 108;   // tray plate depth  (Y)
+tray_t           = 4;     // tray plate thickness
+tray_standoff_h  = 6;     // standoff height (clears solder/leads under boards)
+tray_standoff_d  = 7.5;   // standoff outer diameter
+tray_edge        = 9;     // frame-bolt inset from the tray edge
+
+// Jetson Orin Nano dev-kit carrier mounting holes (nominal — MEASURE yours):
+tray_jetson_dx   = 86;    // hole spacing X
+tray_jetson_dy   = 58;    // hole spacing Y
+tray_jetson_cx   = -34;   // pattern centre offset on the tray (X)
+tray_jetson_ins  = ins_m3_d;
+tray_jetson_ins_h= ins_m3_h;
+
+// Aux protoboard (MCP4922 DAC + op-amp level-shift) mounting holes:
+tray_aux_dx      = 45;
+tray_aux_dy      = 35;
+tray_aux_cx      = 56;    // pattern centre offset on the tray (X)
+tray_aux_ins     = ins_m3_d;
+tray_aux_ins_h   = ins_m3_h;
+
+// =============================================================================
+//  PHOTODIODE / LENS HOLDER — the wing-beat sensor front-end (§3.2)
+//  A short barrel: a collecting lens up front, the photodiode at its focal
+//  distance behind it, on a slotted foot that clamps to the rail and aims at the
+//  detection volume. Optics are cheap and non-critical — this just gathers flux.
+// =============================================================================
+pd_lens_od       = 12.0;  // collecting lens outer diameter (MEASURE)
+pd_lens_t        = 3.0;   // lens seat depth (front counterbore)
+pd_focal         = 20.0;  // lens focal length ≈ lens-to-photodiode distance
+pd_barrel_wall   = 3.0;   // barrel wall thickness
+pd_body_w        = 5.8;   // BPW34 body pocket width  (MEASURE)
+pd_body_h        = 4.7;   // BPW34 body pocket height
+pd_body_t        = 3.6;   // BPW34 body pocket depth
+pd_lead_d        = 5.0;   // rear clearance for leads / wiring
+pd_foot_len      = 26;    // foot length along the rail
+pd_base_t        = 6;     // foot thickness
+pd_slot_len      = 18;    // aim-position adjust travel on the rail
+pd_aim_deg       = 0;     // barrel tilt toward the volume (0 = level, -Y look)

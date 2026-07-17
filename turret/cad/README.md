@@ -14,18 +14,27 @@ metal — see that section for why.
 > geometry before committing filament.
 
 ## Files
-| File | Part |
-|---|---|
-| `params.scad` | every dimension; each is annotated with the §4.5 constraint it serves |
-| `galvo_pad.scad` | short solid pedestal for the galvo scanner block (Constraint 1) |
-| `camera_mount.scad` | slotted L-bracket holding one Pi Cam v2 (Constraint 2 & 4); **print two** |
-| `print_plate.scad` | all three laid out for one P1S bed |
+| File | Part | Stiffness-critical? |
+|---|---|---|
+| `params.scad` | every dimension; each is annotated with the §4.5 constraint it serves | — |
+| `galvo_pad.scad` | short solid pedestal for the galvo scanner block (Constraint 1) | **yes** |
+| `camera_mount.scad` | slotted L-bracket holding one Pi Cam v2 (Constraint 2 & 4); **print two** | **yes** |
+| `electronics_tray.scad` | standoff plate for the Jetson + MCP4922/op-amp board | no |
+| `photodiode_holder.scad` | lens + BPW34 barrel on a slotted foot (wing-beat sensor, §3.2) | no |
+| `print_plate.scad` | the two stiffness-critical brackets laid out for one P1S bed |  |
+
+The tray and photodiode holder print from their **own files** (the tray is large;
+the holder has a lens bore best sliced on its own) — open each and export its STL.
 
 ## MEASURE these before printing
 The defaults are reasonable but your exact parts vary. Open `params.scad` and set:
 - `galvo_block_w`, `galvo_block_d`, `galvo_bolt_dx`, `galvo_bolt_dy` — your galvo
   scanner block footprint and bolt pattern.
 - `cam_pcb_w`, `cam_pcb_h`, `cam_hole_dx` — your camera board and its hole spacing.
+- `tray_jetson_dx/dy`, `tray_aux_dx/dy` — the Jetson dev-kit and protoboard hole
+  patterns (the Jetson values are nominal — confirm on your board).
+- `pd_lens_od`, `pd_focal`, `pd_body_*` — your collecting lens and BPW34 body; set
+  `pd_focal` to the lens's focal length so the photodiode lands in focus.
 
 ## Print settings (P1S)
 | Setting | Galvo pad | Camera mount |
@@ -37,6 +46,11 @@ The defaults are reasonable but your exact parts vary. Open `params.scad` and se
 | Orientation | base down (as modelled) | foot down (as modelled) |
 | Adhesion | brim (ASA) | brim (ASA) |
 
+Non-critical parts (lighter settings are fine): **electronics tray** — 3 walls,
+15–20 % infill, plate down; **photodiode holder** — 3 walls, 20 % infill, foot
+down (the lens bore prints as an upward blind hole, no support). Neither holds an
+optic in the aim path, so they don't need the bracket-grade stiffness.
+
 Rationale: stiffness governs, not strength, so **more perimeters + higher infill**
 buy stability where it matters. The galvo pad is the stiffness-critical part — do
 not thin it or make it taller than `galvo_ped_h_max`.
@@ -45,6 +59,9 @@ not thin it or make it taller than `galvo_ped_h_max`.
 - **Galvo → pad:** M4 **heat-set brass inserts** in the top face (holes sized by
   `ins_m4_d`). Press in with a soldering iron.
 - **Camera PCB → mount:** M2 heat-set inserts (`ins_m2_d`).
+- **Boards → tray:** M3 heat-set inserts in the standoffs (`ins_m3_d`).
+- **Lens → holder:** press-fit into the front seat; **photodiode:** friction pocket,
+  a dab of hot-glue on the leads for strain relief.
 - **Pad / mount → aluminum:** M5 bolts into **T-nuts** in the extrusion slot — no
   insert; that's why those are clearance holes with a top counterbore.
 
