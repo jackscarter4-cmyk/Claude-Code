@@ -178,7 +178,7 @@ vary by supplier. Qty × unit is folded into the line cost.
 | Warning | laser-on indicator beacon | 1 | $10 | $10 |
 | Enclosure | opaque enclosure + lid interlock switch | 1 | $45 | $45 |
 | **Structure & wiring** | | | | |
-| Frame | 2020 aluminum extrusion + brackets | 1 | $35 | $35 |
+| Frame | 2020 extrusion spans + 3D-printed PETG brackets (§4.5) | 1 | $35 | $35 |
 | Wiring | logic PSU, connectors, misc | 1 | $25 | $25 |
 | | | | **Total** | **$756** |
 
@@ -189,6 +189,101 @@ vary by supplier. Qty × unit is folded into the line cost.
 
 The 445 nm diode is the single line that turns this into a Class-4 eye hazard.
 Build and tune the entire tracking chain first on the pointer (§6).
+
+---
+
+## 4.5 3D-printing the frame (physically verified)
+
+**The governing requirement is stiffness and dimensional stability, not
+strength.** The galvos steer the *beam*, not the head, so the frame never slews
+and carries no dynamic load — just gravity (static) plus thermal and creep drift.
+That single fact drives every choice below, and it means the honest answer is a
+**hybrid frame: 3D-print the brackets, keep the long rigid spans in aluminum
+extrusion.** Printing a monolithic frame would be the wrong call — FDM plastic is
+an order of magnitude less stiff and far less thermally stable than 2020 extrusion,
+and most hobby beds (220–256 mm) can't print a full frame in one piece anyway.
+
+### Error budget the frame must respect
+Steady-state tracking error is **~7.6 mrad** (§7 / `run_sim.py`). A galvo body
+that tilts by angle θ swings the *reflected* beam by **2θ**, so mechanical drift is
+doubly amplified. Budget: keep frame-induced beam drift **≤ 0.5 mrad** (≈7 % of the
+error budget) → each galvo-carrying part must hold **≤ 0.25 mrad of angular drift**.
+Note a *constant* deflection is harmless — it is absorbed when you calibrate in
+place (§5.1). The enemy is *change*: thermal expansion, creep, and non-elastic
+handling. The closed-loop visual servo (§5.1) mops up slow drift, but the frame
+must not hand it a moving target.
+
+### Constraint 1 — static stiffness (beam bending, worked)
+Model a printed galvo bracket as a cantilever carrying the metal scanner block
+(~0.4 kg ⇒ P ≈ 4 N). Tip slope `θ = P·L² / (2·E·I)`, `I = b·h³/12`.
+Printed PETG effective modulus **E ≈ 1.6 GPa** (bulk 2.2 GPa knocked down ~30 % for
+FDM). For an arm `L = 40 mm`, width `b = 40 mm`:
+
+| Wall thickness `h` | `I` (m⁴) | tip slope θ | beam drift 2θ | tip sag δ |
+|---|---|---|---|---|
+| 8 mm | 1.71e-9 | **1.17 mrad** | 2.34 mrad | 31 µm |
+| 12 mm | 5.76e-9 | **0.35 mrad** | 0.70 mrad | 9 µm |
+
+Because `θ ∝ 1/h³`, thickness is the cheap lever. **Conclusion:** a thin printed
+arm is marginal; either mount the galvo block **directly to the extrusion** (best)
+or use a **short, thick (≥12 mm), fully-triangulated PETG pad loaded in
+compression**, not a slender cantilever. Cameras and electronics are grams and
+pass easily on printed mounts.
+
+### Constraint 2 — thermal drift (CTE, worked)
+Stereo depth is `Z = f·B/d`, so `dZ/Z = dB/B` — baseline drift maps straight to
+depth error. Printed PETG CTE ≈ **68 µm/m·°C** ([MakeItFrom](https://www.makeitfrom.com/material-properties/Glycol-Modified-Polyethylene-Terephthalate-PETG-PET-G)).
+A `B = 60 mm` baseline over a `ΔT = 10 °C` warm-up:
+`ΔB = 68e-6 × 0.060 × 10 = 41 µm` → `dB/B = 0.068 %` → at 0.5 m that's **0.34 mm**
+of depth error. Tolerable, but the *angular* toe-in drift of the two cameras is more
+sensitive than the baseline length. **Conclusion:** carry the **camera baseline on
+the aluminum member** (Al CTE ≈ 23 µm/m·°C, ~3× better) or a single short printed
+part, and re-run the closed-loop calibration after warm-up.
+
+### Constraint 3 — glass transition & creep (material choice)
+Printed parts near the laser diode and galvo drivers see 40–60 °C. PLA's Tg is only
+**60–65 °C** and it **creeps under sustained load well below Tg** — a precision mount
+that must hold calibration for weeks will slowly walk. PETG (Tg **81 °C**) is the
+minimum; **ASA (Tg 105 °C)** for anything touching the laser heatsink or a unit that
+sees sunlight. **Do not use PLA for any optical or galvo mount.**
+
+### Constraint 4 — FDM anisotropy & fasteners
+FDM parts are weakest between layers (Z). Orient every bracket so bolt tension and
+mount loads act **in-plane**, never pulling layers apart. **Use heat-set brass M3
+inserts** for all repeated fastening (galvo, cameras, boards) — never self-tap the
+plastic; tapped PLA/PETG strips after a few assembly cycles and destroys
+repeatability. Add printed **datum bosses/slots** so a camera returns to the same
+pose after removal (verify: re-seat 5×, calibration residual should stay within a
+few DAC counts).
+
+### Constraint 5 — keep laser heat off plastic
+The 445 nm diode dumps several watts as heat and **must ride its own aluminum
+heatsink**, thermally standoff-isolated from any printed part. Printed plastic is a
+thermal insulator and will soften/creep if bolted straight to the diode housing.
+
+### What to print vs. what stays metal
+| Print in PETG/ASA | Keep metal |
+|---|---|
+| Camera stereo mounts (with datums) | 2020 aluminum extrusion — the rigid spans/baseline |
+| Electronics tray (Jetson, MCP4922, op-amp) | Galvo scanner block (mount to extrusion or thick pad) |
+| Photodiode + lens holder | Laser diode heatsink |
+| Cable guides, backstop holder, enclosure panels | M3 heat-set inserts, fasteners |
+
+### Verification procedure (measure, don't assume)
+The math above is first-order; a graduate project *verifies it empirically*:
+1. **Deflection test** — dial indicator on the galvo mount; hang 0.5 kg; confirm
+   tip movement matches the table (tens of µm) **and fully recovers** (no permanent
+   set). If it doesn't recover, thicken the pad or go metal.
+2. **Thermal-soak / dot-drift test** — lock the beam on a fixed target, run galvos
+   + laser 30 min, log the dot centroid in the camera. Drift must stay a small
+   fraction of 7.6 mrad; if not, isolate heat or shorten the recalibration interval.
+3. **Tap (resonance) test** — tap the frame, watch the dot ring-down on camera; the
+   first natural frequency should sit well above ambient/scan vibration, and ring-
+   down should damp quickly. Add mass/triangulation if it rings.
+4. **Repeatability** — the re-seat test in Constraint 4.
+
+Filament cost is negligible (~150–250 g PETG, a few dollars) and is folded into the
+"extrusion frame + brackets" BOM line.
 
 ---
 

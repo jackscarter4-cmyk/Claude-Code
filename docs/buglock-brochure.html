@@ -155,6 +155,11 @@
   .spec-row .val { font-size: 14.5px; }
   .spec-row .val b { font-weight: 600; }
 
+  .frame-lede {
+    font-size: 15px; color: var(--muted); max-width: 64ch; margin: 0 0 18px;
+  }
+  .frame-lede strong { color: var(--ink); font-weight: 600; }
+
   /* ---- bill of materials ---- */
   .table-scroll { overflow-x: auto; }
   .bom {
@@ -295,6 +300,23 @@
   </section>
 
   <section>
+    <h2>3D-printed frame — verified</h2>
+    <p class="frame-lede">Print the brackets, not the frame. The galvos steer the beam,
+      not the head, so the frame never moves under load — what matters is
+      <strong>stiffness and staying put</strong>, not strength. The long rigid spans stay
+      aluminum; PETG/ASA brackets bolt to them.</p>
+    <div class="specs">
+      <div class="spec-row"><div class="label">Print · PETG/ASA</div><div class="val">Camera mounts (with datums), electronics tray, photodiode holder, cable guides, enclosure panels</div></div>
+      <div class="spec-row"><div class="label">Keep metal</div><div class="val">2020 extrusion spans · galvo scanner block · laser heatsink · heat-set M3 brass inserts</div></div>
+      <div class="spec-row"><div class="label">Material</div><div class="val"><b>No PLA</b> on optical or galvo mounts — it creeps and softens by ~60&nbsp;°C; PETG (Tg 81&nbsp;°C) minimum, ASA near the laser</div></div>
+    </div>
+    <p class="bom-fine">Verified against the ±7.6&nbsp;mrad aim budget: a ≥12&nbsp;mm-thick galvo pad
+      flexes only ~0.35&nbsp;mrad under the scanner's weight (slope ∝ 1/thickness³), and a 60&nbsp;mm
+      PETG baseline drifts ~40&nbsp;µm over a 10&nbsp;°C warm-up (≈0.3&nbsp;mm depth error at 0.5&nbsp;m).
+      Confirm on the bench: dial-indicator deflection test + a 30-minute dot-drift soak.</p>
+  </section>
+
+  <section>
     <h2>Bill of materials</h2>
     <div class="table-scroll">
       <div class="bom">
@@ -322,7 +344,7 @@
         <div class="bom-row"><div class="part">Opaque enclosure + lid interlock switch</div><div class="num">×1</div><div class="num">$45</div><div class="num cost">$45</div></div>
 
         <div class="bom-group">Structure &amp; wiring</div>
-        <div class="bom-row"><div class="part">2020 aluminum extrusion frame + brackets</div><div class="num">×1</div><div class="num">$35</div><div class="num cost">$35</div></div>
+        <div class="bom-row"><div class="part">2020 extrusion spans + 3D-printed PETG brackets</div><div class="num">×1</div><div class="num">$35</div><div class="num cost">$35</div></div>
         <div class="bom-row"><div class="part">Logic PSU, wiring, connectors, misc</div><div class="num">×1</div><div class="num">$25</div><div class="num cost">$25</div></div>
 
         <div class="bom-total"><div class="lab">Total — full build</div><div class="amt">$756</div></div>
