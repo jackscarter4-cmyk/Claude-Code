@@ -155,6 +155,57 @@
   .spec-row .val { font-size: 14.5px; }
   .spec-row .val b { font-weight: 600; }
 
+  /* ---- bill of materials ---- */
+  .table-scroll { overflow-x: auto; }
+  .bom {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden; min-width: 480px;
+  }
+  .bom-group {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent-ink);
+    background: var(--surface-2); padding: 10px 18px;
+    border-top: 1px solid var(--line);
+  }
+  .bom-group:first-child { border-top: 0; }
+  .bom-row {
+    display: grid; grid-template-columns: 1fr 42px 68px 74px;
+    align-items: baseline; gap: 12px; padding: 11px 18px;
+    border-top: 1px solid var(--line); font-size: 14px;
+  }
+  .bom-row .part b { font-weight: 600; }
+  .bom-row .part small { color: var(--muted); font-size: 12px; }
+  .bom-row .num {
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    text-align: right; color: var(--muted); font-size: 13px;
+  }
+  .bom-row .cost { color: var(--ink); }
+  .bom-total {
+    display: grid; grid-template-columns: 1fr auto; gap: 12px;
+    padding: 15px 18px; border-top: 2px solid var(--line);
+    background: var(--surface-2); align-items: baseline;
+  }
+  .bom-total .lab {
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .bom-total .amt {
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-size: 22px; font-weight: 700; color: var(--accent-ink);
+  }
+  .bom-notes {
+    margin: 14px 2px 0; font-size: 12.5px; color: var(--muted);
+    display: grid; gap: 6px;
+  }
+  .bom-notes .row { display: flex; justify-content: space-between; gap: 12px; max-width: 480px; }
+  .bom-notes .row span:last-child {
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink);
+  }
+  .bom-fine {
+    font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+    margin-top: 12px; letter-spacing: 0.03em; line-height: 1.5;
+  }
+
   /* ---- safety ---- */
   .safety {
     background: var(--warn-bg); border: 1px solid var(--warn-line);
@@ -241,6 +292,50 @@
       <div class="spec-row"><div class="label">Safety</div><div class="val">Latching e-stop · backstop-required · size + wing-beat gate · key &amp; enclosure interlock</div></div>
       <div class="spec-row"><div class="label">Laser</div><div class="val"><b>Your choice, added last</b> — bring the whole system up on a &lt;1&nbsp;mW pointer first</div></div>
     </div>
+  </section>
+
+  <section>
+    <h2>Bill of materials</h2>
+    <div class="table-scroll">
+      <div class="bom">
+
+        <div class="bom-group">Compute &amp; sensing</div>
+        <div class="bom-row"><div class="part"><b>Jetson Orin Nano Super</b> dev kit</div><div class="num">×1</div><div class="num">$249</div><div class="num cost">$249</div></div>
+        <div class="bom-row"><div class="part">Raspberry Pi Camera v2 <small>(IMX219)</small></div><div class="num">×2</div><div class="num">$25</div><div class="num cost">$50</div></div>
+        <div class="bom-row"><div class="part">850&nbsp;nm IR illuminator board</div><div class="num">×1</div><div class="num">$13</div><div class="num cost">$13</div></div>
+        <div class="bom-row"><div class="part">BPW34 photodiode + op-amp front-end <small>(wing-beat)</small></div><div class="num">×1</div><div class="num">$8</div><div class="num cost">$8</div></div>
+
+        <div class="bom-group">Beam steering</div>
+        <div class="bom-row"><div class="part">30&nbsp;Kpps ILDA galvo set <small>(2 galvos + drivers + PSU)</small></div><div class="num">×1</div><div class="num">$160</div><div class="num cost">$160</div></div>
+        <div class="bom-row"><div class="part">MCP4922 dual 12-bit DAC</div><div class="num">×1</div><div class="num">$4</div><div class="num cost">$4</div></div>
+        <div class="bom-row"><div class="part">Op-amp level-shift board <small>(0–5&nbsp;V → ±12&nbsp;V)</small></div><div class="num">×1</div><div class="num">$6</div><div class="num cost">$6</div></div>
+
+        <div class="bom-group">Laser</div>
+        <div class="bom-row"><div class="part">Bring-up laser <small>(&lt;1&nbsp;mW Class&nbsp;2 red pointer)</small></div><div class="num">×1</div><div class="num">$8</div><div class="num cost">$8</div></div>
+        <div class="bom-row"><div class="part">Focusable 445&nbsp;nm 5&nbsp;W diode + driver <small>(added last)</small></div><div class="num">×1</div><div class="num">$85</div><div class="num cost">$85</div></div>
+
+        <div class="bom-group">Safety &amp; enclosure</div>
+        <div class="bom-row"><div class="part">OD5+ 445&nbsp;nm laser goggles <small>(per person)</small></div><div class="num">×1</div><div class="num">$40</div><div class="num cost">$40</div></div>
+        <div class="bom-row"><div class="part">Latching e-stop button <small>(NC)</small></div><div class="num">×1</div><div class="num">$10</div><div class="num cost">$10</div></div>
+        <div class="bom-row"><div class="part">Key switch</div><div class="num">×1</div><div class="num">$8</div><div class="num cost">$8</div></div>
+        <div class="bom-row"><div class="part">Laser-on warning beacon</div><div class="num">×1</div><div class="num">$10</div><div class="num cost">$10</div></div>
+        <div class="bom-row"><div class="part">Opaque enclosure + lid interlock switch</div><div class="num">×1</div><div class="num">$45</div><div class="num cost">$45</div></div>
+
+        <div class="bom-group">Structure &amp; wiring</div>
+        <div class="bom-row"><div class="part">2020 aluminum extrusion frame + brackets</div><div class="num">×1</div><div class="num">$35</div><div class="num cost">$35</div></div>
+        <div class="bom-row"><div class="part">Logic PSU, wiring, connectors, misc</div><div class="num">×1</div><div class="num">$25</div><div class="num cost">$25</div></div>
+
+        <div class="bom-total"><div class="lab">Total — full build</div><div class="amt">$756</div></div>
+      </div>
+    </div>
+
+    <div class="bom-notes">
+      <div class="row"><span>Start safe — skip the 445&nbsp;nm diode, develop on the pointer</span><span>− $85 → $671</span></div>
+      <div class="row"><span>Already have a Jetson, or use a Raspberry&nbsp;Pi 5 you own</span><span>− $249 → $507</span></div>
+    </div>
+    <p class="bom-fine">Approximate 2026 street prices, USD, hobby-grade parts — excludes shipping &amp; tax and
+      varies by supplier. The 445&nbsp;nm diode is the one line that makes the turret an eye hazard;
+      build and tune everything else first on the &lt;1&nbsp;mW pointer.</p>
   </section>
 
   <section class="safety">

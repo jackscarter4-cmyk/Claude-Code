@@ -154,19 +154,41 @@ Jetson  --SPI-->  MCP4922 dual DAC (0–5 V)  -->  op-amp gain stage (→ ±12 V
 
 ## 4. Bill of materials (starter, ~short-range benchtop)
 
-| Subsystem | Part | Notes / source |
-|---|---|---|
-| Compute | NVIDIA Jetson Orin Nano dev kit | runs YOLO @ 30+ FPS |
-| Cameras | 2× Raspberry Pi Camera v2 (IMX219) | stereo pair, Ildaron's choice |
-| IR flood | 850 nm LED illuminator | contrast against backstop |
-| Wingbeat sensor | IR photodiode (e.g. BPW34) + transimpedance op-amp | 100–700 Hz gate |
-| Beam steering | 20 Kpps ILDA galvo kit (2 mirrors + drivers + ±12 V PSU) | mass-market |
-| DAC | Microchip MCP4922 (dual 12-bit SPI) | Ildaron's exact part |
-| Level shift | dual op-amp gain board (0–5 V → ±10–12 V) | Ildaron's chain |
-| **Bring-up laser** | **<1 mW Class 2 red pointer** | **use this the whole time you develop** |
-| Target laser (later) | focusable 445 nm engraver diode module | only inside enclosure + interlocks |
-| Safety | key switch, mushroom E-stop, indicator beacon, enclosure, OD-rated goggles | §6, non-negotiable |
-| Structure | rigid aluminum extrusion frame | camera+galvo rigidity = aim accuracy |
+Approximate 2026 street prices, USD, hobby-grade parts — exclude shipping & tax,
+vary by supplier. Qty × unit is folded into the line cost.
+
+| Subsystem | Part | Qty | Unit | Cost |
+|---|---|---:|---:|---:|
+| **Compute & sensing** | | | | |
+| Compute | NVIDIA Jetson Orin Nano Super dev kit | 1 | $249 | $249 |
+| Cameras | Raspberry Pi Camera v2 (IMX219), stereo pair | 2 | $25 | $50 |
+| IR flood | 850 nm LED illuminator board | 1 | $13 | $13 |
+| Wingbeat sensor | BPW34 photodiode + transimpedance op-amp front-end | 1 | $8 | $8 |
+| **Beam steering** | | | | |
+| Galvos | 30 Kpps ILDA galvo set (2 galvos + drivers + PSU) | 1 | $160 | $160 |
+| DAC | Microchip MCP4922 (dual 12-bit SPI) | 1 | $4 | $4 |
+| Level shift | dual op-amp gain board (0–5 V → ±12 V) | 1 | $6 | $6 |
+| **Laser** | | | | |
+| Bring-up laser | <1 mW Class 2 red pointer (develop on this) | 1 | $8 | $8 |
+| Target laser | focusable 445 nm 5 W engraver diode + driver (added last) | 1 | $85 | $85 |
+| **Safety & enclosure** | | | | |
+| Goggles | OD5+ 445 nm laser goggles (per person) | 1 | $40 | $40 |
+| E-stop | latching mushroom button (NC) | 1 | $10 | $10 |
+| Key switch | keyed arming switch | 1 | $8 | $8 |
+| Warning | laser-on indicator beacon | 1 | $10 | $10 |
+| Enclosure | opaque enclosure + lid interlock switch | 1 | $45 | $45 |
+| **Structure & wiring** | | | | |
+| Frame | 2020 aluminum extrusion + brackets | 1 | $35 | $35 |
+| Wiring | logic PSU, connectors, misc | 1 | $25 | $25 |
+| | | | **Total** | **$756** |
+
+**Cheaper starting points**
+- Skip the 445 nm diode and develop entirely on the <1 mW pointer: **−$85 → $671**
+  (this is also the *recommended* first build — nothing here is an eye hazard).
+- Reuse a Jetson you own, or run a Raspberry Pi 5 instead: **−$249 → $507**.
+
+The 445 nm diode is the single line that turns this into a Class-4 eye hazard.
+Build and tune the entire tracking chain first on the pointer (§6).
 
 ---
 
