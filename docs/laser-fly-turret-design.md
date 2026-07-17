@@ -285,6 +285,11 @@ The math above is first-order; a graduate project *verifies it empirically*:
 Filament cost is negligible (~150–250 g PETG, a few dollars) and is folded into the
 "extrusion frame + brackets" BOM line.
 
+**Parametric CAD.** OpenSCAD for the galvo pad and stereo camera mounts is in
+[`turret/cad/`](../turret/cad/) — every dimension is driven by the constraints
+above (e.g. the galvo pad thickness/height and the slotted, aluminum-referenced
+camera baseline). Laid out for a Bambu Lab P1S bed in `print_plate.scad`.
+
 ---
 
 ## 5. The two hard problems (and the proven fixes)
