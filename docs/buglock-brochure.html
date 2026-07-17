@@ -1,0 +1,270 @@
+<title>BUGLOCK — auto-tracking laser turret</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #f3f6f4;
+    --surface: #ffffff;
+    --surface-2: #fafcfa;
+    --ink: #13201b;
+    --muted: #5b6a63;
+    --line: #d8ded9;
+    --accent: #0d8a5b;      /* measured signal-green */
+    --accent-ink: #0a6e49;
+    --warn: #b36a00;
+    --warn-bg: #fbf1e0;
+    --warn-line: #ecd3a8;
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b100e;
+      --surface: #121a16;
+      --surface-2: #0f1613;
+      --ink: #e7efea;
+      --muted: #90a198;
+      --line: #253029;
+      --accent: #34c98d;
+      --accent-ink: #55d6a1;
+      --warn: #e0a63f;
+      --warn-bg: #211a0f;
+      --warn-line: #48381d;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f3f6f4; --surface: #ffffff; --surface-2: #fafcfa; --ink: #13201b;
+    --muted: #5b6a63; --line: #d8ded9; --accent: #0d8a5b; --accent-ink: #0a6e49;
+    --warn: #b36a00; --warn-bg: #fbf1e0; --warn-line: #ecd3a8;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b100e; --surface: #121a16; --surface-2: #0f1613; --ink: #e7efea;
+    --muted: #90a198; --line: #253029; --accent: #34c98d; --accent-ink: #55d6a1;
+    --warn: #e0a63f; --warn-bg: #211a0f; --warn-line: #48381d;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 28px 22px 56px; }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .accent { color: var(--accent-ink); }
+
+  /* ---- top bar ---- */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--line);
+  }
+  .brandmark { display: flex; align-items: center; gap: 12px; }
+  .reticle { width: 34px; height: 34px; flex: none; color: var(--accent); }
+  .reticle .dot { transform-origin: center; }
+  @media (prefers-reduced-motion: no-preference) {
+    .reticle .dot { animation: pulse 2.4s ease-in-out infinite; }
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .brandmark b { font-weight: 700; letter-spacing: 0.02em; font-size: 15px; }
+
+  /* ---- hero ---- */
+  .hero { padding: 40px 0 30px; }
+  h1 {
+    font-size: clamp(38px, 8vw, 68px);
+    line-height: 0.98; margin: 12px 0 0; letter-spacing: -0.02em;
+    font-weight: 720; text-wrap: balance;
+  }
+  h1 .light { color: var(--muted); font-weight: 300; }
+  .lede {
+    font-size: clamp(16px, 2.4vw, 19px); color: var(--muted);
+    max-width: 60ch; margin: 18px 0 0;
+  }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  /* ---- readouts ---- */
+  .readouts {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 1px; background: var(--line); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden; margin-top: 30px;
+  }
+  .readout { background: var(--surface); padding: 18px 16px; }
+  .readout .k {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .readout .v {
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-size: clamp(20px, 3.5vw, 26px); font-weight: 600; margin-top: 6px;
+    color: var(--ink);
+  }
+  .readout .v .u { font-size: 13px; color: var(--muted); font-weight: 500; }
+  .measured {
+    font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+    margin-top: 10px; letter-spacing: 0.04em;
+  }
+  .measured .led {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); margin-right: 7px; vertical-align: middle;
+  }
+
+  /* ---- section ---- */
+  section { margin-top: 46px; }
+  h2 {
+    font-size: 13px; font-family: var(--font-mono); letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600;
+    margin: 0 0 20px; display: flex; align-items: center; gap: 12px;
+  }
+  h2::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  /* ---- signal chain ---- */
+  .chain { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .step {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px 14px; position: relative;
+  }
+  .step .n {
+    font-family: var(--font-mono); font-size: 11px; color: var(--accent-ink);
+    font-weight: 700;
+  }
+  .step h3 { margin: 8px 0 6px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+  .step p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+
+  /* ---- specs ---- */
+  .specs {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden;
+  }
+  .spec-row {
+    display: grid; grid-template-columns: 190px 1fr; gap: 16px;
+    padding: 14px 18px; border-top: 1px solid var(--line);
+  }
+  .spec-row:first-child { border-top: 0; }
+  .spec-row .label {
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted); padding-top: 1px;
+  }
+  .spec-row .val { font-size: 14.5px; }
+  .spec-row .val b { font-weight: 600; }
+
+  /* ---- safety ---- */
+  .safety {
+    background: var(--warn-bg); border: 1px solid var(--warn-line);
+    border-radius: 12px; padding: 20px 22px;
+  }
+  .safety h2 { color: var(--warn); }
+  .safety h2::after { background: var(--warn-line); }
+  .safety ul { margin: 0; padding-left: 20px; }
+  .safety li { font-size: 14px; margin: 7px 0; }
+  .safety li::marker { color: var(--warn); }
+  .safety b { color: var(--warn); }
+
+  /* ---- footer ---- */
+  footer {
+    margin-top: 46px; padding-top: 22px; border-top: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; gap: 20px 40px; justify-content: space-between;
+    font-size: 13px; color: var(--muted);
+  }
+  footer .files code {
+    font-family: var(--font-mono); font-size: 12px; color: var(--ink);
+    background: var(--surface-2); border: 1px solid var(--line);
+    padding: 2px 7px; border-radius: 5px; display: inline-block; margin: 3px 4px 0 0;
+  }
+  footer b { color: var(--ink); }
+
+  @media (max-width: 720px) {
+    .readouts { grid-template-columns: repeat(2, 1fr); }
+    .chain { grid-template-columns: 1fr 1fr; }
+    .spec-row { grid-template-columns: 1fr; gap: 4px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brandmark">
+      <svg class="reticle" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <circle cx="20" cy="20" r="12"/>
+        <path d="M20 2v8M20 30v8M2 20h8M30 20h8"/>
+        <circle class="dot" cx="20" cy="20" r="3.2" fill="currentColor" stroke="none"/>
+      </svg>
+      <b>BUGLOCK</b>
+    </div>
+    <span class="eyebrow">DIY · Benchtop · Open build</span>
+  </div>
+
+  <header class="hero">
+    <span class="eyebrow accent">Auto-tracking laser turret</span>
+    <h1>It finds the fly.<br><span class="light">And it keeps the dot on it.</span></h1>
+    <p class="lede">A benchtop turret that spots a small flying insect with stereo cameras,
+      confirms it by <strong>wing-beat frequency</strong>, predicts where it's headed, and
+      steers a laser to stay locked on — all inside a hard <strong>safety interlock</strong>.
+      Built as a Frankenstein of proven tech: the Photonic Fence architecture, an open-source
+      galvo aiming chain, and the optical-wingbeat ID literature.</p>
+
+    <div class="readouts">
+      <div class="readout"><div class="k">Lock held</div><div class="v">99.4<span class="u">%</span></div></div>
+      <div class="readout"><div class="k">Aim error</div><div class="v">±7.6<span class="u">mrad</span></div></div>
+      <div class="readout"><div class="k">Wing-beat band</div><div class="v">100–700<span class="u">Hz</span></div></div>
+      <div class="readout"><div class="k">Working range</div><div class="v">0.3–1.0<span class="u">m</span></div></div>
+    </div>
+    <p class="measured"><span class="led"></span>Figures measured in the headless simulator (<code>run_sim.py</code>) — 17 tests green.</p>
+  </header>
+
+  <section>
+    <h2>How it works</h2>
+    <div class="chain">
+      <div class="step"><div class="n">01</div><h3>Detect</h3><p>Stereo IMX219 cameras + IR flood pull the insect out against a matte backstop.</p></div>
+      <div class="step"><div class="n">02</div><h3>Track</h3><p>A constant-velocity Kalman filter locks one target and predicts its next position.</p></div>
+      <div class="step"><div class="n">03</div><h3>Confirm</h3><p>An FFT wing-beat gate checks for a 100–700 Hz signature — not dust, glints, or a hand.</p></div>
+      <div class="step"><div class="n">04</div><h3>Aim</h3><p>A learned 3D→DAC map drives the two-axis galvo to the predicted lead point.</p></div>
+      <div class="step"><div class="n">05</div><h3>Gate</h3><p>The interlock permits the beam only when every safety condition is true.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Specifications</h2>
+    <div class="specs">
+      <div class="spec-row"><div class="label">Sensing</div><div class="val">2× Raspberry&nbsp;Pi Camera v2 (IMX219) stereo pair, <b>6&nbsp;cm baseline</b>, 850&nbsp;nm IR flood + matte backstop</div></div>
+      <div class="spec-row"><div class="label">Target ID</div><div class="val">IR photodiode + FFT wing-beat gate — confirms flies, fruit flies, gnats by their <b>~100–700&nbsp;Hz</b> wing-beat</div></div>
+      <div class="spec-row"><div class="label">Compute</div><div class="val">NVIDIA Jetson Orin Nano — tiny-YOLO detection at <b>30+ FPS</b>, 60&nbsp;Hz control loop</div></div>
+      <div class="spec-row"><div class="label">Beam steering</div><div class="val">Two-axis galvanometer via <b>MCP4922</b> 12-bit DAC; calibration fit residual <b>~1.6 DAC counts</b></div></div>
+      <div class="spec-row"><div class="label">Tracking</div><div class="val">6-state Kalman filter with lead-point prediction to cancel sense→aim latency</div></div>
+      <div class="spec-row"><div class="label">Safety</div><div class="val">Latching e-stop · backstop-required · size + wing-beat gate · key &amp; enclosure interlock</div></div>
+      <div class="spec-row"><div class="label">Laser</div><div class="val"><b>Your choice, added last</b> — bring the whole system up on a &lt;1&nbsp;mW pointer first</div></div>
+    </div>
+  </section>
+
+  <section class="safety">
+    <h2>Safety first — not optional</h2>
+    <ul>
+      <li>A steered beam points in <b>unpredictable directions</b>. Anything over ~1&nbsp;mW is an eye hazard the moment it's uncovered.</li>
+      <li>The turret <b>will not fire</b> without a solid, in-range backstop behind the target — the beam never leaves the box toward a face or window.</li>
+      <li>Oversized or wrong-cadence targets (a hand, a pet) <b>hard-inhibit</b> firing.</li>
+      <li>Build the hardware interlock <b>first</b>; the software gate is defence-in-depth on top of it, never instead of it.</li>
+      <li>Run a real high-power diode <b>only</b> inside a closed, interlocked enclosure, wearing wavelength-matched goggles.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <div style="max-width: 46ch;">
+      <b>What it is:</b> a supervised DIY engineering project and a working software stack.<br>
+      <b>What it isn't:</b> a finished product, and not harmless — you supply and own the laser.
+    </div>
+    <div class="files">
+      <b style="display:block; margin-bottom:6px; font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase;">In the repo</b>
+      <code>docs/laser-fly-turret-design.md</code>
+      <code>turret/</code>
+      <code>turret/run_sim.py</code>
+    </div>
+  </footer>
+
+</div>

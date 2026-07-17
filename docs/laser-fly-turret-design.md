@@ -7,6 +7,11 @@ Every subsystem is a lift of an existing, documented design, wired together
 ("Frankenstein" style). Where a real product or published build already solved a
 problem, we copy it and cite it.
 
+> **Runnable code.** The control software that implements this design lives in
+> [`turret/`](../turret/) and runs the full detection → tracking → aiming → safety
+> loop **headless against a synthetic fly, with no hardware** (`python turret/run_sim.py`).
+> 17 tests pass. See [`turret/README.md`](../turret/README.md).
+
 > **Scope note.** This is a DIY design. It does **not** attempt the "neutralize
 > without killing" energy problem — that is a genuinely hard, separately-studied
 > question (thermal dose vs. wing damage vs. lethality) and is out of scope here.
